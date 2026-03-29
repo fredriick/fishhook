@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fishhook Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; background:var(--bg); color:var(--text); }
+  .header {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:12px 24px; background:var(--surface); border-bottom:1px solid var(--border);
+  }
+  .header h1 { font-size:18px; letter-spacing:2px; }
+  .header .status { font-size:13px; color:var(--dim); }
+  .header .status .live { color:var(--green); }
+  .grid {
+    display:grid; grid-template-columns:1fr 1fr; gap:12px;
+    padding:12px; max-width:1600px; margin:0 auto;
+  }
+  .card {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:8px; padding:16px; min-height:200px;
+  }
+  .card h2 { font-size:13px; color:var(--dim); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px; }
+  .card.wide { grid-column: 1 / -1; }
+  .stat-row { display:flex; gap:24px; flex-wrap:wrap; margin-bottom:12px; }
+  .stat { text-align:center; }
+  .stat .val { font-size:28px; font-weight:bold; }
+  .stat .label { font-size:11px; color:var(--dim); text-transform:uppercase; }
+  .stat .val.bullish { color:var(--green); }
+  .stat .val.bearish { color:var(--red); }
+  .stat .val.neutral { color:var(--yellow); }
+  canvas { max-height:280px; }
+  .dist-bar { display:flex; height:32px; border-radius:4px; overflow:hidden; margin:8px 0; }
+  .dist-bar div { display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:bold; min-width:20px; }
+  .dist-bar .sb { background:#da3633; }
+  .dist-bar .b { background:#f85149; }
+  .dist-bar .n { background:#d29922; color:#000; }
+  .dist-bar .bu { background:#3fb950; }
+  .dist-bar .sbu { background:#238636; }
+  .btn-row { display:flex; gap:8px; margin-bottom:12px; }
+  button {
+    background:var(--accent); color:#000; border:none; border-radius:6px;
+    padding:8px 16px; font-family:inherit; font-size:12px; cursor:pointer; font-weight:600;
+  }
+  button:hover { opacity:0.85; }
+  button.secondary { background:var(--border); color:var(--text); }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { text-align:left; color:var(--dim); font-weight:normal; padding:6px 8px; border-bottom:1px solid var(--border); }
+  td { padding:6px 8px; border-bottom:1px solid var(--border); }
+  .tag { padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
+  .tag.bullish { background:#238636; }
+  .tag.bearish { background:#da3633; }
+  .tag.neutral { background:#d29922; color:#000; }
+  .params { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
+  .params label { font-size:12px; color:var(--dim); }
+  .params input {
+    background:var(--bg); border:1px solid var(--border); color:var(--text);
+    border-radius:4px; padding:4px 8px; width:80px; font-family:inherit; font-size:12px;
+  }
+  #log { font-size:11px; color:var(--dim); max-height:120px; overflow-y:auto; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>FISHHOOK</h1>
+  <div class="status">
+    <span class="live" id="connStatus">CONNECTING</span> |
+    <span id="lastUpdate">--</span>
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- Consensus Overview -->
+  <div class="card">
+    <h2>Swarm Consensus</h2>
+    <div class="stat-row" id="consensusStats">
+      <div class="stat"><div class="val" id="cDirection">--</div><div class="label">Direction</div></div>
+      <div class="stat"><div class="val" id="cMean">--</div><div class="label">Mean Opinion</div></div>
+      <div class="stat"><div class="val" id="cAgreement">--</div><div class="label">Agreement</div></div>
+      <div class="stat"><div class="val" id="cStrength">--</div><div class="label">Strength</div></div>
+    </div>
+    <h2>Opinion Distribution</h2>
+    <div class="dist-bar" id="distBar">
+      <div class="sb">0</div><div class="b">0</div><div class="n">0</div><div class="bu">0</div><div class="sbu">0</div>
+    </div>
+    <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--dim);">
+      <span>Strong Bear</span><span>Bear</span><span>Neutral</span><span>Bull</span><span>Strong Bull</span>
+    </div>
+  </div>
+
+  <!-- Simulation Controls -->
+  <div class="card">
+    <h2>Simulation Controls</h2>
+    <div class="params">
+      <label>Agents <input type="number" id="pAgents" value="1000"></label>
+      <label>Rounds <input type="number" id="pRounds" value="50"></label>
+      <label>Signal <input type="number" id="pSignal" value="0" step="0.1" min="-1" max="1"></label>
+    </div>
+    <div class="btn-row">
+      <button onclick="runSimulation()">Run Simulation</button>
+      <button class="secondary" onclick="refreshAll()">Refresh</button>
+    </div>
+    <div id="simResult" style="font-size:12px; color:var(--dim);">Ready</div>
+  </div>
+
+  <!-- Opinion History Chart -->
+  <div class="card">
+    <h2>Consensus History</h2>
+    <canvas id="historyChart"></canvas>
+  </div>
+
+  <!-- Distribution Chart -->
+  <div class="card">
+    <h2>Opinion Distribution Chart</h2>
+    <canvas id="distChart"></canvas>
+  </div>
+
+  <!-- Portfolio / Trades -->
+  <div class="card">
+    <h2>Portfolio</h2>
+    <div class="stat-row" id="portfolioStats">
+      <div class="stat"><div class="val" id="pPositions">0</div><div class="label">Positions</div></div>
+      <div class="stat"><div class="val" id="pValue">$0</div><div class="label">Value</div></div>
+      <div class="stat"><div class="val" id="pPnl">$0</div><div class="label">P&L</div></div>
+    </div>
+    <h2>Recent Runs</h2>
+    <table>
+      <thead><tr><th>Run</th><th>Markets</th><th>Signals</th><th>Trades</th><th>Time</th></tr></thead>
+      <tbody id="runsTable"></tbody>
+    </table>
+  </div>
+
+  <!-- Network Stats -->
+  <div class="card">
+    <h2>Social Network</h2>
+    <div class="stat-row" id="networkStats">
+      <div class="stat"><div class="val" id="nNodes">0</div><div class="label">Agents</div></div>
+      <div class="stat"><div class="val" id="nEdges">0</div><div class="label">Connections</div></div>
+      <div class="stat"><div class="val" id="nComponents">0</div><div class="label">Groups</div></div>
+    </div>
+    <h2>Top Influencers</h2>
+    <table>
+      <thead><tr><th>Agent</th><th>Centrality</th></tr></thead>
+      <tbody id="influencersTable"></tbody>
+    </table>
+  </div>
+
+  <!-- Log -->
+  <div class="card wide">
+    <h2>Event Log</h2>
+    <div id="log"></div>
+  </div>
+
+</div>
+
+<script>
+const API = '';
+let historyData = [];
+let distChart, historyChart;
+
+function log(msg) {
+  const el = document.getElementById('log');
+  const ts = new Date().toLocaleTimeString();
+  el.textContent = `[${ts}] ${msg}\n` + el.textContent;
+  if (el.textContent.length > 5000) el.textContent = el.textContent.slice(0, 5000);
+}
+
+async function api(path) {
+  try {
+    const r = await fetch(API + path);
+    return await r.json();
+  } catch (e) {
+    log(`API error: ${e.message}`);
+    return null;
+  }
+}
+
+function initCharts() {
+  const ctxH = document.getElementById('historyChart').getContext('2d');
+  historyChart = new Chart(ctxH, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Mean Opinion',
+        data: [],
+        borderColor: '#58a6ff',
+        backgroundColor: 'rgba(88,166,255,0.1)',
+        fill: true, tension: 0.3, pointRadius: 3,
+      }, {
+        label: 'Agreement',
+        data: [],
+        borderColor: '#3fb950',
+        borderDash: [5, 5],
+        tension: 0.3, pointRadius: 2,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y: { min: -1, max: 1, grid: { color: '#30363d' }, ticks: { color: '#8b949e' } },
+        x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }
+      },
+      plugins: { legend: { labels: { color: '#e6edf3' } } }
+    }
+  });
+
+  const ctxD = document.getElementById('distChart').getContext('2d');
+  distChart = new Chart(ctxD, {
+    type: 'bar',
+    data: {
+      labels: ['Strong Bear', 'Bear', 'Neutral', 'Bull', 'Strong Bull'],
+      datasets: [{
+        data: [0, 0, 0, 0, 0],
+        backgroundColor: ['#da3633', '#f85149', '#d29922', '#3fb950', '#238636'],
+        borderWidth: 0, borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } },
+        x: { grid: { display: false }, ticks: { color: '#8b949e' } }
+      },
+      plugins: { legend: { display: false } }
+    }
+  });
+}
+
+function updateConsensus(consensus) {
+  if (!consensus) return;
+  const dir = consensus.direction || 'neutral';
+  const dirEl = document.getElementById('cDirection');
+  dirEl.textContent = dir.toUpperCase();
+  dirEl.className = 'val ' + dir;
+
+  document.getElementById('cMean').textContent = (consensus.mean_opinion || 0).toFixed(4);
+  document.getElementById('cAgreement').textContent = ((consensus.agreement_ratio || 0) * 100).toFixed(1) + '%';
+  document.getElementById('cStrength').textContent = (consensus.strength || 0).toFixed(4);
+
+  const dist = consensus.distribution || {};
+  const total = Object.values(dist).reduce((a, b) => a + b, 0) || 1;
+  const keys = ['strong_bear', 'bear', 'neutral', 'bull', 'strong_bull'];
+  const bar = document.getElementById('distBar');
+  bar.innerHTML = '';
+  keys.forEach((k, i) => {
+    const pct = ((dist[k] || 0) / total * 100).toFixed(0);
+    const cls = ['sb', 'b', 'n', 'bu', 'sbu'][i];
+    const d = document.createElement('div');
+    d.className = cls;
+    d.textContent = pct + '%';
+    d.style.flex = pct;
+    bar.appendChild(d);
+  });
+
+  distChart.data.datasets[0].data = keys.map(k => dist[k] || 0);
+  distChart.update();
+
+  historyData.push({
+    round: historyData.length + 1,
+    mean: consensus.mean_opinion || 0,
+    agreement: consensus.agreement_ratio || 0,
+  });
+  if (historyData.length > 50) historyData.shift();
+  historyChart.data.labels = historyData.map(d => d.round);
+  historyChart.data.datasets[0].data = historyData.map(d => d.mean);
+  historyChart.data.datasets[1].data = historyData.map(d => d.agreement);
+  historyChart.update();
+}
+
+function updatePortfolio(data) {
+  if (!data) return;
+  const p = data.portfolio || {};
+  document.getElementById('pPositions').textContent = p.positions || 0;
+  document.getElementById('pValue').textContent = '$' + (p.total_value || 0).toFixed(2);
+  const pnlEl = document.getElementById('pPnl');
+  pnlEl.textContent = '$' + (p.total_pnl || 0).toFixed(2);
+  pnlEl.className = 'val ' + ((p.total_pnl || 0) >= 0 ? 'bullish' : 'bearish');
+}
+
+function updateRuns(runs) {
+  const tbody = document.getElementById('runsTable');
+  tbody.innerHTML = '';
+  (runs || []).slice(-5).reverse().forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${r.run_id}</td><td>${r.markets_analyzed}</td><td>${r.signals_generated}</td><td>${r.trades_executed}</td><td>${(r.elapsed || 0).toFixed(1)}s</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function updateNetwork(data) {
+  if (!data) return;
+  const s = data.stats || {};
+  document.getElementById('nNodes').textContent = s.nodes || 0;
+  document.getElementById('nEdges').textContent = s.edges || 0;
+  document.getElementById('nComponents').textContent = s.components || 0;
+
+  const tbody = document.getElementById('influencersTable');
+  tbody.innerHTML = '';
+  (data.influencers || []).slice(0, 5).forEach(inf => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>Agent #${inf.agent_id}</td><td>${inf.centrality}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function refreshAll() {
+  const [status, sim, trades, network] = await Promise.all([
+    api('/api/status'),
+    api('/api/simulation'),
+    api('/api/trades'),
+    api('/api/network'),
+  ]);
+
+  if (status) {
+    updateRuns(status.runs || []);
+    const strategy = status.strategy || {};
+    if (strategy.last_consensus) updateConsensus(strategy.last_consensus);
+  }
+  if (sim && sim.consensus) updateConsensus(sim.consensus);
+  if (trades) updatePortfolio(trades);
+  if (network) updateNetwork(network);
+
+  document.getElementById('connStatus').textContent = 'LIVE';
+  document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+}
+
+async function runSimulation() {
+  const agents = document.getElementById('pAgents').value;
+  const rounds = document.getElementById('pRounds').value;
+  const signal = document.getElementById('pSignal').value;
+  document.getElementById('simResult').textContent = 'Running...';
+  log(`Running simulation: ${agents} agents, ${rounds} rounds, signal=${signal}`);
+
+  const result = await api(`/api/simulation/run?agents=${agents}&rounds=${rounds}&signal=${signal}`);
+  if (result) {
+    document.getElementById('simResult').textContent =
+      `${result.consensus?.direction || '?'} | ${result.total_rounds || result.consensus?.round || '?'} rounds | ${result.converged ? 'CONVERGED' : 'NOT CONVERGED'}`;
+    if (result.consensus) updateConsensus(result.consensus);
+    log(`Simulation complete: ${result.consensus?.direction} in ${result.total_rounds || result.consensus?.round} rounds`);
+  } else {
+    document.getElementById('simResult').textContent = 'Failed';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initCharts();
+  refreshAll();
+  setInterval(refreshAll, 5000);
+});
+</script>
+
+</body>
+</html>

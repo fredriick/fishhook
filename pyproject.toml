@@ -1,0 +1,25 @@
+[project]
+name = "fishhook"
+version = "0.1.0"
+description = "Data ingestion + swarm simulation + Polymarket execution pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.40.0",
+    "httpx>=0.27.0",
+    "networkx>=3.2",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "pyyaml>=6.0.1",
+    "rich>=13.7.0",
+    "numpy>=1.26.0",
+    "aiohttp>=3.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+fishhook = "fishhook.cli:main"

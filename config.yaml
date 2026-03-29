@@ -1,0 +1,47 @@
+log_level: INFO
+
+scraper:
+  headless: true
+  timeout_ms: 30000
+  max_concurrent_pages: 5
+  user_agent_rotation: true
+  intercept_requests: true
+  capture_dynamic_values: true
+  proxy:
+    enabled: false
+    rotation_interval_seconds: 300
+    proxies: []
+
+swarm:
+  num_agents: 1000
+  max_rounds: 50
+  consensus_threshold: 0.8
+  social_connection_probability: 0.01
+  opinion_update_rate: 0.1
+  noise_factor: 0.05
+  personality:
+    risk_tolerance: 0.5
+    conformity_bias: 0.5
+    information_weight: 0.5
+    social_influence_susceptibility: 0.5
+    memory_decay_rate: 0.05
+    conviction_strength: 0.5
+
+polymarket:
+  api_base_url: "https://clob.polymarket.com"
+  gamma_api_url: "https://gamma-api.polymarket.com"
+  api_key: ""
+  api_secret: ""
+  passphrase: ""
+  chain_id: 137
+  max_position_size: 100.0
+  min_edge_threshold: 0.05
+  testnet: true
+
+strategy:
+  divergence_threshold: 0.1
+  min_confidence: 0.6
+  simulation_weight: 0.6
+  data_weight: 0.4
+  cooldown_seconds: 60
+  max_trades_per_hour: 10
