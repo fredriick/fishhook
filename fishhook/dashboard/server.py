@@ -40,6 +40,7 @@ class DashboardServer:
         app.router.add_get("/api/trades", self._handle_trades)
         app.router.add_get("/api/network", self._handle_network)
         app.router.add_get("/api/history", self._handle_history)
+        app.router.add_get("/api/backtest", self._handle_backtest)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -145,3 +146,29 @@ class DashboardServer:
         from aiohttp import web
 
         return web.json_response({"history": self._simulation_history})
+
+    async def _handle_backtest(self, request: Any) -> Any:
+        from aiohttp import web
+
+        from fishhook.backtest.engine import BacktestEngine
+
+        markets = int(request.query.get("markets", 20))
+        agents = int(request.query.get("agents", 300))
+        rounds = int(request.query.get("rounds", 20))
+        min_volume = float(request.query.get("min_volume", 1000))
+        category = request.query.get("category")
+
+        engine = BacktestEngine(
+            swarm_config=self._orchestrator._swarm._config,
+            strategy_config=self._orchestrator._strategy._config,
+        )
+
+        result = await engine.run(
+            num_markets=markets,
+            min_volume=min_volume,
+            category=category,
+            agents=agents,
+            rounds=rounds,
+        )
+
+        return web.json_response(result.to_dict())

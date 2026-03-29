@@ -85,6 +85,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--refresh", type=float, default=2.0, help="Refresh interval in seconds"
     )
 
+    bt_parser = subparsers.add_parser(
+        "backtest", help="Backtest swarm against resolved markets"
+    )
+    bt_parser.add_argument(
+        "--markets",
+        "-m",
+        type=int,
+        default=50,
+        help="Number of resolved markets to test",
+    )
+    bt_parser.add_argument(
+        "--agents", "-a", type=int, default=500, help="Agents per simulation"
+    )
+    bt_parser.add_argument(
+        "--rounds", "-r", type=int, default=30, help="Rounds per simulation"
+    )
+    bt_parser.add_argument(
+        "--min-volume", type=float, default=1000.0, help="Min market volume filter"
+    )
+    bt_parser.add_argument(
+        "--category", type=str, default=None, help="Market category filter"
+    )
+    bt_parser.add_argument(
+        "--sweep", action="store_true", help="Run parameter sweep (agents x thresholds)"
+    )
+
     return parser
 
 
@@ -190,6 +216,39 @@ async def cmd_tui(args: argparse.Namespace, config: PipelineConfig) -> None:
         await orchestrator.stop()
 
 
+async def cmd_backtest(args: argparse.Namespace, config: PipelineConfig) -> None:
+    from fishhook.backtest.engine import BacktestEngine
+
+    engine = BacktestEngine(
+        swarm_config=config.swarm,
+        strategy_config=config.strategy,
+    )
+
+    if args.sweep:
+        print("Running parameter sweep...")
+        results = await engine.run_sweep(
+            num_markets=args.markets,
+            min_volume=args.min_volume,
+            category=args.category,
+        )
+        print("\n=== SWEEP RESULTS ===\n")
+        for key, result in sorted(results.items()):
+            m = result.metrics
+            print(
+                f"{key}: trades={m.total_trades} win_rate={m.win_rate:.2%} pnl={m.total_pnl:.2f} sharpe={m.sharpe_ratio:.2f}"
+            )
+    else:
+        print(f"Backtesting {args.markets} markets with {args.agents} agents...")
+        result = await engine.run(
+            num_markets=args.markets,
+            min_volume=args.min_volume,
+            category=args.category,
+            agents=args.agents,
+            rounds=args.rounds,
+        )
+        print(json.dumps(result.to_dict(), indent=2))
+
+
 async def main_async() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -208,6 +267,7 @@ async def main_async() -> None:
         "status": cmd_status,
         "dashboard": cmd_dashboard,
         "tui": cmd_tui,
+        "backtest": cmd_backtest,
     }
 
     handler = commands.get(args.command)
