@@ -18,7 +18,9 @@ from fishhook.market.circuit_breaker import CircuitBreaker
 from fishhook.market.client import PolymarketClient
 from fishhook.market.executor import TradeExecutor
 from fishhook.market.models import TradeSignal
+from fishhook.market.slippage import SlippageModel
 from fishhook.strategy.engine import StrategyEngine
+from fishhook.strategy.portfolio_heat import PortfolioHeatTracker
 from fishhook.swarm.world import SimulationWorld
 from fishhook.utils.logging import get_logger, setup_logging
 
@@ -80,6 +82,22 @@ class PipelineOrchestrator:
                 learning_rate=self._config.credibility.learning_rate,
             )
 
+        self._portfolio_heat = None
+        if self._config.portfolio_heat.enabled:
+            self._portfolio_heat = PortfolioHeatTracker(
+                max_total_exposure=self._config.portfolio_heat.max_total_exposure,
+                max_category_exposure=self._config.portfolio_heat.max_category_exposure,
+                max_single_position=self._config.portfolio_heat.max_single_position,
+                max_correlated_positions=self._config.portfolio_heat.max_correlated_positions,
+            )
+
+        self._slippage_model = None
+        if self._config.slippage.enabled:
+            self._slippage_model = SlippageModel(
+                impact_coefficient=self._config.slippage.impact_coefficient,
+                min_acceptable_edge=self._config.slippage.min_acceptable_edge,
+            )
+
         self._orderbook_source = None
         if self._config.data_sources.orderbook_as_signal:
             self._orderbook_source = OrderBookSignalSource(self._market_client)
@@ -93,6 +111,7 @@ class PipelineOrchestrator:
             self._config.polymarket,
             circuit_breaker=self._circuit_breaker,
             paper_trading=self._config.polymarket.testnet,
+            slippage_model=self._slippage_model,
         )
         self._swarm = SimulationWorld(self._config.swarm)
         self._strategy = StrategyEngine(
@@ -101,6 +120,7 @@ class PipelineOrchestrator:
             deduplicator=self._deduplicator,
             credibility=self._credibility,
             orderbook_source=self._orderbook_source,
+            portfolio_heat=self._portfolio_heat,
         )
 
         self._run_count = 0
@@ -157,6 +177,13 @@ class PipelineOrchestrator:
                     trade = await self._executor.execute_signal(signal)
                     if trade:
                         run.trades_executed += 1
+
+                        if self._portfolio_heat:
+                            self._portfolio_heat.add_position(
+                                market_id=signal.market_id,
+                                direction=signal.side.value,
+                                notional=signal.price * signal.size,
+                            )
 
         except Exception as e:
             error_msg = f"Run {run.run_id} error: {e}"
@@ -266,6 +293,9 @@ class PipelineOrchestrator:
 
         if self._credibility:
             status["credibility"] = self._credibility.to_dict()
+
+        if self._portfolio_heat:
+            status["portfolio_heat"] = self._portfolio_heat.get_status()
 
         return status
 

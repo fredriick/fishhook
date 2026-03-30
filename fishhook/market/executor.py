@@ -11,6 +11,7 @@ from fishhook.config.settings import PolymarketConfig
 from fishhook.market.circuit_breaker import CircuitBreaker
 from fishhook.market.client import PolymarketClient
 from fishhook.market.models import OrderSide, OrderType, Position, TradeSignal
+from fishhook.market.slippage import SlippageEstimate, SlippageModel
 from fishhook.utils.logging import get_logger
 
 logger = get_logger("market.executor")
@@ -28,6 +29,9 @@ class ExecutedTrade:
     fill_price: float | None = None
     fill_size: float | None = None
     paper: bool = False
+    slippage_cost: float = 0.0
+    pre_edge: float = 0.0
+    post_edge: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -41,6 +45,9 @@ class ExecutedTrade:
             "fill_price": self.fill_price,
             "fill_size": self.fill_size,
             "paper": self.paper,
+            "slippage_cost": round(self.slippage_cost, 4),
+            "pre_edge": round(self.pre_edge, 4),
+            "post_edge": round(self.post_edge, 4),
         }
 
 
@@ -51,6 +58,7 @@ class TradeExecutor:
         config: PolymarketConfig | None = None,
         circuit_breaker: CircuitBreaker | None = None,
         paper_trading: bool = False,
+        slippage_model: SlippageModel | None = None,
     ) -> None:
         self._client = client
         self._config = config or PolymarketConfig()
@@ -62,6 +70,7 @@ class TradeExecutor:
         self._circuit_breaker = circuit_breaker
         self._paper_trading = paper_trading or self._config.testnet
         self._paper_positions: dict[str, Position] = {}
+        self._slippage_model = slippage_model
 
     @property
     def positions(self) -> list[Position]:
@@ -102,6 +111,22 @@ class TradeExecutor:
             return False
         return True
 
+    async def _estimate_slippage(self, signal: TradeSignal) -> SlippageEstimate | None:
+        if not self._slippage_model:
+            return None
+        try:
+            order_book = await self._client.get_order_book(signal.market_id)
+            return self._slippage_model.estimate(
+                order_book=order_book,
+                side=signal.side.value,
+                price=signal.price,
+                size=signal.size,
+                edge=signal.edge,
+            )
+        except Exception as e:
+            logger.warning(f"Slippage estimation failed: {e}")
+            return None
+
     async def execute_signal(self, signal: TradeSignal) -> ExecutedTrade | None:
         if not signal.is_actionable:
             logger.info(
@@ -121,14 +146,24 @@ class TradeExecutor:
         if not self._check_position_size(signal.price, signal.size):
             return None
 
+        slippage = await self._estimate_slippage(signal)
+        if slippage and not slippage.accept:
+            logger.info(
+                f"Slippage rejected trade for {signal.market_id}: {slippage.reason}"
+            )
+            return None
+
         if signal.edge < self._config.min_edge_threshold:
             logger.info(
                 f"Edge {signal.edge:.4f} below threshold {self._config.min_edge_threshold}"
             )
             return None
 
+        slippage_cost = slippage.total_slippage_cost if slippage else 0.0
+        post_edge = slippage.post_edge if slippage else signal.edge
+
         if self._paper_trading:
-            return self._execute_paper_trade(signal)
+            return self._execute_paper_trade(signal, slippage_cost, post_edge)
 
         result = await self._client.place_order(
             token_id=signal.market_id,
@@ -145,6 +180,9 @@ class TradeExecutor:
                 price=signal.price,
                 size=signal.size,
                 status=result.get("status", "submitted"),
+                slippage_cost=slippage_cost,
+                pre_edge=signal.edge,
+                post_edge=post_edge,
             )
             self._trade_history.append(trade)
             self._trades_this_hour += 1
@@ -154,13 +192,15 @@ class TradeExecutor:
 
             logger.info(
                 f"Executed: {signal.side.value} {signal.size} @ ${signal.price} "
-                f"(edge={signal.edge:.4f}, conf={signal.confidence:.4f})"
+                f"(edge={signal.edge:.4f}, post_edge={post_edge:.4f}, slip={slippage_cost:.4f})"
             )
             return trade
 
         return None
 
-    def _execute_paper_trade(self, signal: TradeSignal) -> ExecutedTrade:
+    def _execute_paper_trade(
+        self, signal: TradeSignal, slippage_cost: float, post_edge: float
+    ) -> ExecutedTrade:
         trade = ExecutedTrade(
             order_id=f"paper_{int(time.time())}",
             market_id=signal.market_id,
@@ -171,6 +211,9 @@ class TradeExecutor:
             fill_price=signal.price,
             fill_size=signal.size,
             paper=True,
+            slippage_cost=slippage_cost,
+            pre_edge=signal.edge,
+            post_edge=post_edge,
         )
         self._trade_history.append(trade)
         self._trades_this_hour += 1
@@ -179,7 +222,7 @@ class TradeExecutor:
 
         logger.info(
             f"[PAPER] {signal.side.value} {signal.size} @ ${signal.price} "
-            f"(edge={signal.edge:.4f}, conf={signal.confidence:.4f})"
+            f"(edge={signal.edge:.4f}, post_edge={post_edge:.4f}, slip={slippage_cost:.4f})"
         )
         return trade
 
@@ -230,6 +273,10 @@ class TradeExecutor:
         winning = sum(1 for p in self._positions.values() if p.unrealized_pnl > 0)
         losing = sum(1 for p in self._positions.values() if p.unrealized_pnl < 0)
 
+        total_slippage = sum(
+            t.slippage_cost for t in self._trade_history if not t.paper
+        )
+
         result: dict[str, Any] = {
             "positions": len(self._positions),
             "total_value": round(total_value, 2),
@@ -239,6 +286,7 @@ class TradeExecutor:
             "total_trades": self.total_trades,
             "trades_remaining_hour": self.trades_remaining_this_hour,
             "paper_trading": self._paper_trading,
+            "total_slippage_cost": round(total_slippage, 4),
         }
 
         if self._circuit_breaker:

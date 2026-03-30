@@ -70,3 +70,15 @@ deduplicator:
 credibility:
   enabled: true
   learning_rate: 0.05
+
+portfolio_heat:
+  enabled: true
+  max_total_exposure: 500.0
+  max_category_exposure: 200.0
+  max_single_position: 100.0
+  max_correlated_positions: 5
+
+slippage:
+  enabled: true
+  impact_coefficient: 0.1
+  min_acceptable_edge: 0.02

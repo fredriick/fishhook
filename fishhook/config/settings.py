@@ -99,6 +99,20 @@ class CredibilityConfig(BaseModel):
     learning_rate: float = 0.05
 
 
+class PortfolioHeatConfig(BaseModel):
+    enabled: bool = True
+    max_total_exposure: float = 500.0
+    max_category_exposure: float = 200.0
+    max_single_position: float = 100.0
+    max_correlated_positions: int = 5
+
+
+class SlippageConfig(BaseModel):
+    enabled: bool = True
+    impact_coefficient: float = 0.1
+    min_acceptable_edge: float = 0.02
+
+
 class PipelineConfig(BaseSettings):
     model_config = {"env_prefix": "MCP_PARSE_"}
 
@@ -112,6 +126,8 @@ class PipelineConfig(BaseSettings):
     circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
     deduplicator: DeduplicatorConfig = Field(default_factory=DeduplicatorConfig)
     credibility: CredibilityConfig = Field(default_factory=CredibilityConfig)
+    portfolio_heat: PortfolioHeatConfig = Field(default_factory=PortfolioHeatConfig)
+    slippage: SlippageConfig = Field(default_factory=SlippageConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> PipelineConfig:

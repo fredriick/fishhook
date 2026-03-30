@@ -11,6 +11,7 @@ from fishhook.ingestion.credibility import CredibilityScorer
 from fishhook.ingestion.deduplicator import SignalDeduplicator
 from fishhook.ingestion.sources import OrderBookSignalSource, SourceSignal
 from fishhook.market.models import Market, OrderSide, TradeSignal
+from fishhook.strategy.portfolio_heat import PortfolioHeatTracker
 from fishhook.swarm.world import SimulationResult, SimulationWorld
 from fishhook.utils.logging import get_logger
 
@@ -24,6 +25,7 @@ class StrategyState:
     signals_executed: int = 0
     last_simulation: SimulationResult | None = None
     market_signals: dict[str, float] = field(default_factory=dict)
+    signal_timestamps: dict[str, float] = field(default_factory=dict)
 
 
 class StrategyEngine:
@@ -34,6 +36,7 @@ class StrategyEngine:
         deduplicator: SignalDeduplicator | None = None,
         credibility: CredibilityScorer | None = None,
         orderbook_source: OrderBookSignalSource | None = None,
+        portfolio_heat: PortfolioHeatTracker | None = None,
     ) -> None:
         self._config = config or StrategyConfig()
         self._swarm = swarm or SimulationWorld()
@@ -42,12 +45,19 @@ class StrategyEngine:
         self._deduplicator = deduplicator
         self._credibility = credibility
         self._orderbook_source = orderbook_source
+        self._portfolio_heat = portfolio_heat
 
     async def initialize(self, num_agents: int = 1000) -> None:
         if not self._initialized:
             self._swarm.initialize(num_agents)
             self._initialized = True
             logger.info(f"Strategy engine initialized with {num_agents} agents")
+
+    def _is_signal_stale(self, market_id: str) -> bool:
+        if self._config.signal_ttl_seconds <= 0:
+            return False
+        last_time = self._state.signal_timestamps.get(market_id, 0)
+        return (time.time() - last_time) > self._config.signal_ttl_seconds
 
     async def analyze_market(
         self,
@@ -61,6 +71,9 @@ class StrategyEngine:
         if now - self._state.last_signal_time < self._config.cooldown_seconds:
             return None
 
+        if self._is_signal_stale(market.id):
+            logger.debug(f"Signal for {market.id} is stale, skipping")
+
         market_signal = await self._compute_market_signal(market, scraped_data)
 
         sim_result = await self._run_simulation(market_signal, scraped_data)
@@ -70,8 +83,22 @@ class StrategyEngine:
 
         self._state.last_signal_time = now
         self._state.signals_generated += 1
+        self._state.signal_timestamps[market.id] = now
 
         if signal:
+            if self._portfolio_heat:
+                notional = signal.price * signal.size
+                can_add, reason = self._portfolio_heat.check_can_add(
+                    market_id=signal.market_id,
+                    direction=signal.side.value,
+                    notional=notional,
+                )
+                if not can_add:
+                    logger.info(
+                        f"Portfolio heat blocked signal for '{market.question[:40]}': {reason}"
+                    )
+                    return None
+
             logger.info(
                 f"Signal for '{market.question[:50]}...': "
                 f"{signal.side.value} @ ${signal.price:.3f} "
@@ -243,7 +270,7 @@ class StrategyEngine:
         return round(kelly_size * edge_multiplier, 2)
 
     def get_state_summary(self) -> dict[str, Any]:
-        return {
+        summary: dict[str, Any] = {
             "initialized": self._initialized,
             "signals_generated": self._state.signals_generated,
             "last_simulation_rounds": (
@@ -257,3 +284,6 @@ class StrategyEngine:
                 else None
             ),
         }
+        if self._portfolio_heat:
+            summary["portfolio_heat"] = self._portfolio_heat.get_status()
+        return summary
