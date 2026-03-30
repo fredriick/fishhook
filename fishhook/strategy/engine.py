@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fishhook.config.settings import StrategyConfig
+from fishhook.ingestion.credibility import CredibilityScorer
+from fishhook.ingestion.deduplicator import SignalDeduplicator
+from fishhook.ingestion.sources import OrderBookSignalSource, SourceSignal
 from fishhook.market.models import Market, OrderSide, TradeSignal
 from fishhook.swarm.world import SimulationResult, SimulationWorld
 from fishhook.utils.logging import get_logger
@@ -28,11 +31,17 @@ class StrategyEngine:
         self,
         config: StrategyConfig | None = None,
         swarm: SimulationWorld | None = None,
+        deduplicator: SignalDeduplicator | None = None,
+        credibility: CredibilityScorer | None = None,
+        orderbook_source: OrderBookSignalSource | None = None,
     ) -> None:
         self._config = config or StrategyConfig()
         self._swarm = swarm or SimulationWorld()
         self._state = StrategyState()
         self._initialized = False
+        self._deduplicator = deduplicator
+        self._credibility = credibility
+        self._orderbook_source = orderbook_source
 
     async def initialize(self, num_agents: int = 1000) -> None:
         if not self._initialized:
@@ -52,7 +61,7 @@ class StrategyEngine:
         if now - self._state.last_signal_time < self._config.cooldown_seconds:
             return None
 
-        market_signal = self._compute_market_signal(market, scraped_data)
+        market_signal = await self._compute_market_signal(market, scraped_data)
 
         sim_result = await self._run_simulation(market_signal, scraped_data)
         swarm_signal = self._swarm.get_swarm_signal()
@@ -88,7 +97,7 @@ class StrategyEngine:
         signals.sort(key=lambda s: s.edge, reverse=True)
         return signals
 
-    def _compute_market_signal(
+    async def _compute_market_signal(
         self,
         market: Market,
         scraped_data: dict[str, Any] | None,
@@ -97,12 +106,19 @@ class StrategyEngine:
         weight_sum = 0.0
 
         implied_prob = market.implied_probability
-        signal += (0.5 - implied_prob) * self._config.data_weight
+        implied_signal = (0.5 - implied_prob) * self._config.data_weight
+        signal += implied_signal
         weight_sum += self._config.data_weight
 
         if scraped_data:
             if "sentiment" in scraped_data:
                 sentiment = float(scraped_data["sentiment"])
+                source = scraped_data.get("sentiment_source", "")
+                if self._credibility:
+                    sentiment = self._credibility.get_weighted_value(sentiment, source)
+                    self._credibility.record_signal(
+                        source, sentiment, market_id=market.id
+                    )
                 signal += sentiment * 0.3
                 weight_sum += 0.3
 
@@ -115,6 +131,22 @@ class StrategyEngine:
                 social = float(scraped_data["social_signals"])
                 signal += social * 0.2
                 weight_sum += 0.2
+
+            if self._deduplicator:
+                self._deduplicator.add(
+                    value=implied_signal,
+                    source="implied_probability",
+                    category="price",
+                    metadata={"market_id": market.id},
+                )
+
+        if self._orderbook_source:
+            ob_signals = await self._orderbook_source.fetch_signals(
+                market_id=market.id, token_ids=[market.id]
+            )
+            for ob_sig in ob_signals:
+                signal += ob_sig.value * ob_sig.confidence * 0.3
+                weight_sum += 0.3
 
         if weight_sum > 0:
             signal /= weight_sum
@@ -193,9 +225,22 @@ class StrategyEngine:
 
     def _calculate_position_size(self, edge: float, confidence: float) -> float:
         base_size = 10.0
+
+        win_prob = confidence
+        lose_prob = 1.0 - win_prob
+        odds = (1.0 + edge) / max(0.01, 1.0 - edge) if edge > 0 else 1.0
+
+        if odds > 0 and lose_prob > 0:
+            kelly = (win_prob * odds - lose_prob) / odds
+        else:
+            kelly = 0.0
+
+        kelly = max(0.0, kelly)
+        fractional_kelly = kelly * self._config.kelly_fraction
+        kelly_size = base_size * max(0.1, min(3.0, fractional_kelly * 10))
+
         edge_multiplier = min(3.0, 1.0 + edge * 10)
-        confidence_multiplier = confidence
-        return round(base_size * edge_multiplier * confidence_multiplier, 2)
+        return round(kelly_size * edge_multiplier, 2)
 
     def get_state_summary(self) -> dict[str, Any]:
         return {

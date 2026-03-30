@@ -65,6 +65,38 @@ class StrategyConfig(BaseModel):
     data_weight: float = 0.4
     cooldown_seconds: int = 60
     max_trades_per_hour: int = 10
+    kelly_fraction: float = 0.25
+    signal_ttl_seconds: int = 300
+
+
+class DuneConfig(BaseModel):
+    api_key: str = ""
+    query_ids: list[int] = Field(default_factory=list)
+
+
+class DataSourcesConfig(BaseModel):
+    dune: DuneConfig = Field(default_factory=DuneConfig)
+    orderbook_as_signal: bool = True
+
+
+class CircuitBreakerConfig(BaseModel):
+    enabled: bool = True
+    max_drawdown_pct: float = 10.0
+    drawdown_window_hours: float = 4.0
+    max_consecutive_losses: int = 5
+    max_api_errors_per_hour: int = 10
+    cooldown_seconds: int = 300
+
+
+class DeduplicatorConfig(BaseModel):
+    enabled: bool = True
+    similarity_threshold: float = 0.85
+    window_seconds: int = 300
+
+
+class CredibilityConfig(BaseModel):
+    enabled: bool = True
+    learning_rate: float = 0.05
 
 
 class PipelineConfig(BaseSettings):
@@ -76,6 +108,10 @@ class PipelineConfig(BaseSettings):
     swarm: SwarmConfig = Field(default_factory=SwarmConfig)
     polymarket: PolymarketConfig = Field(default_factory=PolymarketConfig)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
+    data_sources: DataSourcesConfig = Field(default_factory=DataSourcesConfig)
+    circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
+    deduplicator: DeduplicatorConfig = Field(default_factory=DeduplicatorConfig)
+    credibility: CredibilityConfig = Field(default_factory=CredibilityConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> PipelineConfig:

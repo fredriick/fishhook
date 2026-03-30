@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from fishhook.config.settings import PipelineConfig
+from fishhook.ingestion.credibility import CredibilityScorer
+from fishhook.ingestion.deduplicator import SignalDeduplicator
 from fishhook.ingestion.engine import ScrapingEngine
+from fishhook.ingestion.sources import OrderBookSignalSource, SignalSourceManager
+from fishhook.market.circuit_breaker import CircuitBreaker
 from fishhook.market.client import PolymarketClient
 from fishhook.market.executor import TradeExecutor
 from fishhook.market.models import TradeSignal
@@ -52,9 +56,52 @@ class PipelineOrchestrator:
 
         self._scraper = ScrapingEngine(self._config.scraper)
         self._market_client = PolymarketClient(self._config.polymarket)
-        self._executor = TradeExecutor(self._market_client, self._config.polymarket)
+
+        self._circuit_breaker = None
+        if self._config.circuit_breaker.enabled:
+            self._circuit_breaker = CircuitBreaker(
+                max_drawdown_pct=self._config.circuit_breaker.max_drawdown_pct,
+                drawdown_window_hours=self._config.circuit_breaker.drawdown_window_hours,
+                max_consecutive_losses=self._config.circuit_breaker.max_consecutive_losses,
+                max_api_errors_per_hour=self._config.circuit_breaker.max_api_errors_per_hour,
+                cooldown_seconds=self._config.circuit_breaker.cooldown_seconds,
+            )
+
+        self._deduplicator = None
+        if self._config.deduplicator.enabled:
+            self._deduplicator = SignalDeduplicator(
+                similarity_threshold=self._config.deduplicator.similarity_threshold,
+                window_seconds=self._config.deduplicator.window_seconds,
+            )
+
+        self._credibility = None
+        if self._config.credibility.enabled:
+            self._credibility = CredibilityScorer(
+                learning_rate=self._config.credibility.learning_rate,
+            )
+
+        self._orderbook_source = None
+        if self._config.data_sources.orderbook_as_signal:
+            self._orderbook_source = OrderBookSignalSource(self._market_client)
+
+        self._source_manager = SignalSourceManager()
+        if self._orderbook_source:
+            self._source_manager.register(self._orderbook_source)
+
+        self._executor = TradeExecutor(
+            self._market_client,
+            self._config.polymarket,
+            circuit_breaker=self._circuit_breaker,
+            paper_trading=self._config.polymarket.testnet,
+        )
         self._swarm = SimulationWorld(self._config.swarm)
-        self._strategy = StrategyEngine(self._config.strategy, self._swarm)
+        self._strategy = StrategyEngine(
+            self._config.strategy,
+            self._swarm,
+            deduplicator=self._deduplicator,
+            credibility=self._credibility,
+            orderbook_source=self._orderbook_source,
+        )
 
         self._run_count = 0
         self._runs: list[PipelineRun] = []
@@ -81,6 +128,7 @@ class PipelineOrchestrator:
         self._running = False
         await self._scraper.stop()
         await self._market_client.close()
+        await self._source_manager.close()
         logger.info("Pipeline orchestrator stopped")
 
     async def run_once(
@@ -114,6 +162,8 @@ class PipelineOrchestrator:
             error_msg = f"Run {run.run_id} error: {e}"
             logger.error(error_msg)
             run.errors.append(error_msg)
+            if self._circuit_breaker:
+                self._circuit_breaker.record_api_error()
 
         run.elapsed_seconds = time.time() - run.started_at
         self._runs.append(run)
@@ -198,7 +248,7 @@ class PipelineOrchestrator:
         }
 
     def get_status(self) -> dict[str, Any]:
-        return {
+        status: dict[str, Any] = {
             "running": self._running,
             "total_runs": len(self._runs),
             "total_trades": self._executor.total_trades,
@@ -207,6 +257,17 @@ class PipelineOrchestrator:
             "scraper_tokens": len(self._scraper.get_dynamic_tokens()),
             "cached_data": len(self._scraped_data_cache),
         }
+
+        if self._circuit_breaker:
+            status["circuit_breaker"] = self._circuit_breaker.get_status()
+
+        if self._deduplicator:
+            status["deduplicator"] = {"active_signals": self._deduplicator.count}
+
+        if self._credibility:
+            status["credibility"] = self._credibility.to_dict()
+
+        return status
 
     async def save_state(self, path: Path | None = None) -> None:
         path = path or self._config.data_dir / "state.json"

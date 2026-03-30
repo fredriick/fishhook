@@ -111,6 +111,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--sweep", action="store_true", help="Run parameter sweep (agents x thresholds)"
     )
 
+    halt_parser = subparsers.add_parser(
+        "halt", help="Manually halt trading via circuit breaker"
+    )
+    halt_parser.add_argument(
+        "--reason", type=str, default="Manual halt", help="Reason for halting"
+    )
+
+    resume_parser = subparsers.add_parser(
+        "resume", help="Resume trading after circuit breaker halt"
+    )
+
     return parser
 
 
@@ -249,6 +260,24 @@ async def cmd_backtest(args: argparse.Namespace, config: PipelineConfig) -> None
         print(json.dumps(result.to_dict(), indent=2))
 
 
+async def cmd_halt(args: argparse.Namespace, config: PipelineConfig) -> None:
+    orchestrator = PipelineOrchestrator(config)
+    if orchestrator._circuit_breaker:
+        orchestrator._circuit_breaker.force_open(args.reason)
+        print(json.dumps(orchestrator._circuit_breaker.get_status(), indent=2))
+    else:
+        print("Circuit breaker is not enabled in config")
+
+
+async def cmd_resume(args: argparse.Namespace, config: PipelineConfig) -> None:
+    orchestrator = PipelineOrchestrator(config)
+    if orchestrator._circuit_breaker:
+        orchestrator._circuit_breaker.force_close("Manual resume")
+        print(json.dumps(orchestrator._circuit_breaker.get_status(), indent=2))
+    else:
+        print("Circuit breaker is not enabled in config")
+
+
 async def main_async() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -268,6 +297,8 @@ async def main_async() -> None:
         "dashboard": cmd_dashboard,
         "tui": cmd_tui,
         "backtest": cmd_backtest,
+        "halt": cmd_halt,
+        "resume": cmd_resume,
     }
 
     handler = commands.get(args.command)

@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from fishhook.config.settings import PolymarketConfig
+from fishhook.market.circuit_breaker import CircuitBreaker
 from fishhook.market.client import PolymarketClient
 from fishhook.market.models import OrderSide, OrderType, Position, TradeSignal
 from fishhook.utils.logging import get_logger
@@ -26,6 +27,7 @@ class ExecutedTrade:
     status: str = "pending"
     fill_price: float | None = None
     fill_size: float | None = None
+    paper: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -38,6 +40,7 @@ class ExecutedTrade:
             "status": self.status,
             "fill_price": self.fill_price,
             "fill_size": self.fill_size,
+            "paper": self.paper,
         }
 
 
@@ -46,6 +49,8 @@ class TradeExecutor:
         self,
         client: PolymarketClient,
         config: PolymarketConfig | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
+        paper_trading: bool = False,
     ) -> None:
         self._client = client
         self._config = config or PolymarketConfig()
@@ -54,6 +59,9 @@ class TradeExecutor:
         self._last_trade_time: float = 0
         self._trades_this_hour: int = 0
         self._hour_start: float = time.time()
+        self._circuit_breaker = circuit_breaker
+        self._paper_trading = paper_trading or self._config.testnet
+        self._paper_positions: dict[str, Position] = {}
 
     @property
     def positions(self) -> list[Position]:
@@ -66,6 +74,10 @@ class TradeExecutor:
     @property
     def total_trades(self) -> int:
         return len(self._trade_history)
+
+    @property
+    def is_paper_trading(self) -> bool:
+        return self._paper_trading
 
     @property
     def trades_remaining_this_hour(self) -> int:
@@ -97,6 +109,12 @@ class TradeExecutor:
             )
             return None
 
+        if self._circuit_breaker:
+            allowed, reason = self._circuit_breaker.check_before_trade()
+            if not allowed:
+                logger.warning(f"Circuit breaker blocked trade: {reason}")
+                return None
+
         if not self._check_rate_limits():
             return None
 
@@ -108,6 +126,9 @@ class TradeExecutor:
                 f"Edge {signal.edge:.4f} below threshold {self._config.min_edge_threshold}"
             )
             return None
+
+        if self._paper_trading:
+            return self._execute_paper_trade(signal)
 
         result = await self._client.place_order(
             token_id=signal.market_id,
@@ -138,6 +159,29 @@ class TradeExecutor:
             return trade
 
         return None
+
+    def _execute_paper_trade(self, signal: TradeSignal) -> ExecutedTrade:
+        trade = ExecutedTrade(
+            order_id=f"paper_{int(time.time())}",
+            market_id=signal.market_id,
+            side=signal.side.value,
+            price=signal.price,
+            size=signal.size,
+            status="paper_filled",
+            fill_price=signal.price,
+            fill_size=signal.size,
+            paper=True,
+        )
+        self._trade_history.append(trade)
+        self._trades_this_hour += 1
+        self._last_trade_time = time.time()
+        self._update_position(signal)
+
+        logger.info(
+            f"[PAPER] {signal.side.value} {signal.size} @ ${signal.price} "
+            f"(edge={signal.edge:.4f}, conf={signal.confidence:.4f})"
+        )
+        return trade
 
     async def execute_signals(self, signals: list[TradeSignal]) -> list[ExecutedTrade]:
         executed = []
@@ -186,7 +230,7 @@ class TradeExecutor:
         winning = sum(1 for p in self._positions.values() if p.unrealized_pnl > 0)
         losing = sum(1 for p in self._positions.values() if p.unrealized_pnl < 0)
 
-        return {
+        result: dict[str, Any] = {
             "positions": len(self._positions),
             "total_value": round(total_value, 2),
             "total_pnl": round(total_pnl, 2),
@@ -194,4 +238,10 @@ class TradeExecutor:
             "losing_positions": losing,
             "total_trades": self.total_trades,
             "trades_remaining_hour": self.trades_remaining_this_hour,
+            "paper_trading": self._paper_trading,
         }
+
+        if self._circuit_breaker:
+            result["circuit_breaker"] = self._circuit_breaker.get_status()
+
+        return result

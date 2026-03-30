@@ -45,3 +45,28 @@ strategy:
   data_weight: 0.4
   cooldown_seconds: 60
   max_trades_per_hour: 10
+  kelly_fraction: 0.25
+  signal_ttl_seconds: 300
+
+data_sources:
+  dune:
+    api_key: ""
+    query_ids: []
+  orderbook_as_signal: true
+
+circuit_breaker:
+  enabled: true
+  max_drawdown_pct: 10.0
+  drawdown_window_hours: 4.0
+  max_consecutive_losses: 5
+  max_api_errors_per_hour: 10
+  cooldown_seconds: 300
+
+deduplicator:
+  enabled: true
+  similarity_threshold: 0.85
+  window_seconds: 300
+
+credibility:
+  enabled: true
+  learning_rate: 0.05
