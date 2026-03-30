@@ -120,8 +120,9 @@ class TerminalDashboard:
     def render_network(self, status: dict[str, Any]) -> Panel:
         strategy = status.get("strategy", {})
         sim_rounds = strategy.get("last_simulation_rounds", 0)
+        agent_count = self._orchestrator._config.swarm.num_agents
         lines = [
-            f"Agents: 1000",
+            f"Agents: {agent_count}",
             f"Sim Rounds: {sim_rounds}",
             f"Signals Generated: {strategy.get('signals_generated', 0)}",
             f"Initialized: {strategy.get('initialized', False)}",

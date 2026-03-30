@@ -164,10 +164,12 @@ class TradeExecutor:
                 pos.size = max(0, pos.size - signal.size)
                 if pos.size == 0:
                     del self._positions[key]
+                    return
             pos.current_price = signal.price
+            pos.unrealized_pnl = (pos.current_price - pos.avg_price) * pos.size
         else:
             if signal.side == OrderSide.BUY:
-                self._positions[key] = Position(
+                pos = Position(
                     market_id=signal.market_id,
                     token_id=signal.market_id,
                     outcome="yes",
@@ -175,6 +177,8 @@ class TradeExecutor:
                     avg_price=signal.price,
                     current_price=signal.price,
                 )
+                pos.unrealized_pnl = (pos.current_price - pos.avg_price) * pos.size
+                self._positions[key] = pos
 
     def get_portfolio_summary(self) -> dict[str, Any]:
         total_value = sum(p.size * p.current_price for p in self._positions.values())

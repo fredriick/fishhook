@@ -57,9 +57,9 @@ class DynamicValueExtractor:
     ]
 
     COOKIE_PATTERNS = [
-        (r'"__cf_bm"\s*=\s*([^;]+)', "cookie"),
-        (r'"__stripe_mid"\s*=\s*([^;]+)', "cookie"),
-        (r'"__cfduid"\s*=\s*([^;]+)', "cookie"),
+        (r"__cf_bm=([^;]+)", "cookie"),
+        (r"__stripe_mid=([^;]+)", "cookie"),
+        (r"__cfduid=([^;]+)", "cookie"),
     ]
 
     def __init__(self) -> None:
@@ -89,6 +89,7 @@ class DynamicValueExtractor:
                     source_url=source_url,
                     extraction_method=method,
                     headers_used=["x-csrf-token", "x-xsrf-token"],
+                    expires_at=datetime.now() + timedelta(hours=1),
                 )
                 found["csrf_token"] = val
                 self._values["csrf_token"] = val
@@ -102,6 +103,7 @@ class DynamicValueExtractor:
                     value=match.group(1),
                     source_url=source_url,
                     extraction_method=method,
+                    expires_at=datetime.now() + timedelta(hours=2),
                 )
                 found["session_id"] = val
                 self._values["session_id"] = val
@@ -116,10 +118,23 @@ class DynamicValueExtractor:
                     source_url=source_url,
                     extraction_method=method,
                     headers_used=["Authorization"],
+                    expires_at=datetime.now() + timedelta(hours=1),
                 )
                 found["auth_token"] = val
                 self._values["auth_token"] = val
-                break
+
+        for pattern, method in self.COOKIE_PATTERNS:
+            for match in re.finditer(pattern, html):
+                cookie_name = pattern.split("=")[0].split("(")[0].strip("()[]+*?")
+                val = DynamicValue(
+                    name=cookie_name,
+                    value=match.group(1),
+                    source_url=source_url,
+                    extraction_method=method,
+                    expires_at=datetime.now() + timedelta(hours=24),
+                )
+                found[cookie_name] = val
+                self._values[cookie_name] = val
 
         if found:
             logger.info(f"Extracted {len(found)} dynamic values from {source_url}")
@@ -131,7 +146,22 @@ class DynamicValueExtractor:
         found = {}
         for name, value in headers.items():
             lower_name = name.lower()
-            if lower_name in ("set-cookie",):
+            if lower_name == "set-cookie":
+                for pattern, method in self.COOKIE_PATTERNS:
+                    match = re.search(pattern, value)
+                    if match:
+                        cookie_name = (
+                            pattern.split("=")[0].split("(")[0].strip("()[]+*?")
+                        )
+                        dv = DynamicValue(
+                            name=cookie_name,
+                            value=match.group(1),
+                            source_url=source_url,
+                            extraction_method=method,
+                            expires_at=datetime.now() + timedelta(hours=24),
+                        )
+                        found[cookie_name] = dv
+                        self._values[cookie_name] = dv
                 continue
             if "csrf" in lower_name or "xsrf" in lower_name:
                 dv = DynamicValue(
@@ -140,6 +170,7 @@ class DynamicValueExtractor:
                     source_url=source_url,
                     extraction_method="response_header",
                     headers_used=[lower_name],
+                    expires_at=datetime.now() + timedelta(hours=1),
                 )
                 found[lower_name] = dv
                 self._values[lower_name] = dv
@@ -166,6 +197,7 @@ class DynamicValueExtractor:
                     value=data[key],
                     source_url=source_url,
                     extraction_method="json_response",
+                    expires_at=datetime.now() + timedelta(hours=1),
                 )
                 found[key] = dv
                 self._values[key] = dv

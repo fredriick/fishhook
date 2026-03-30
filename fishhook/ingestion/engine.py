@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import time
 from dataclasses import dataclass, field
@@ -58,8 +59,7 @@ class ScrapingEngine:
         self._proxy_manager = ProxyManager(self._config.proxy)
         self._playwright = None
         self._browser = None
-        self._lock = asyncio.Lock()
-        self._user_agent_cycle = iter(__import__("itertools").cycle(USER_AGENTS))
+        self._user_agent_cycle = iter(itertools.cycle(USER_AGENTS))
 
     async def start(self) -> None:
         try:
@@ -100,8 +100,7 @@ class ScrapingEngine:
         actions: list[Callable] | None = None,
         extract_api: bool = True,
     ) -> ScrapeResult:
-        async with self._lock:
-            return await self._do_scrape(url, wait_for, actions, extract_api)
+        return await self._do_scrape(url, wait_for, actions, extract_api)
 
     async def _do_scrape(
         self,

@@ -109,6 +109,10 @@ class AgentMemory:
 class Agent:
     _next_id = 0
 
+    @classmethod
+    def reset_id_counter(cls) -> None:
+        cls._next_id = 0
+
     def __init__(self, personality: AgentPersonality | None = None) -> None:
         Agent._next_id += 1
         self.id = Agent._next_id

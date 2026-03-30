@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -66,6 +67,8 @@ class SimulationWorld:
         n = num_agents or self._config.num_agents
         logger.info(f"Initializing swarm with {n} agents")
 
+        Agent.reset_id_counter()
+
         base_personality = AgentPersonality(
             risk_tolerance=self._config.personality.risk_tolerance,
             conformity_bias=self._config.personality.conformity_bias,
@@ -93,9 +96,7 @@ class SimulationWorld:
     def inject_information(self, signal: float, source: str = "market_data") -> None:
         for agent in self._agents:
             noise = (1 - agent.personality.information_weight) * 0.2
-            perceived_signal = signal + (
-                random_import_gauss() * noise if noise > 0 else 0
-            )
+            perceived_signal = signal + (random.gauss(0, 1) * noise if noise > 0 else 0)
             agent.observe_information(perceived_signal, source=source)
 
     def run_round(self, external_signal: float | None = None) -> ConsensusState:
@@ -191,9 +192,3 @@ class SimulationWorld:
             "strength": state.strength,
             "polarization": state.polarization_index,
         }
-
-
-def random_import_gauss():
-    import random
-
-    return random.gauss(0, 1)
