@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from fishhook.config.settings import PolymarketConfig
+from fishhook.market.attribution import EdgeAttributionTracker
 from fishhook.market.circuit_breaker import CircuitBreaker
 from fishhook.market.client import PolymarketClient
 from fishhook.market.models import OrderSide, OrderType, Position, TradeSignal
@@ -32,6 +33,7 @@ class ExecutedTrade:
     slippage_cost: float = 0.0
     pre_edge: float = 0.0
     post_edge: float = 0.0
+    swarm_signal: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,6 +73,7 @@ class TradeExecutor:
         self._paper_trading = paper_trading or self._config.testnet
         self._paper_positions: dict[str, Position] = {}
         self._slippage_model = slippage_model
+        self._attribution = EdgeAttributionTracker()
 
     @property
     def positions(self) -> list[Position]:
@@ -161,6 +164,16 @@ class TradeExecutor:
 
         slippage_cost = slippage.total_slippage_cost if slippage else 0.0
         post_edge = slippage.post_edge if slippage else signal.edge
+
+        self._attribution.record(
+            order_id=f"local_{int(time.time())}",
+            market_id=signal.market_id,
+            side=signal.side.value,
+            predicted_edge=signal.edge,
+            post_slippage_edge=post_edge,
+            signal_confidence=signal.confidence,
+            swarm_signal=getattr(signal, "swarm_signal", 0.0),
+        )
 
         if self._paper_trading:
             return self._execute_paper_trade(signal, slippage_cost, post_edge)
@@ -291,5 +304,7 @@ class TradeExecutor:
 
         if self._circuit_breaker:
             result["circuit_breaker"] = self._circuit_breaker.get_status()
+
+        result["edge_attribution"] = self._attribution.get_metrics()
 
         return result

@@ -82,3 +82,10 @@ slippage:
   enabled: true
   impact_coefficient: 0.1
   min_acceptable_edge: 0.02
+
+adaptive_weights:
+  enabled: true
+  learning_rate: 0.05
+  min_weight: 0.1
+  max_weight: 0.9
+  window_size: 50

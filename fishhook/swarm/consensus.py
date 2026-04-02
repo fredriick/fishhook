@@ -36,6 +36,21 @@ class ConsensusState:
     def is_polarized(self) -> bool:
         return self.polarization_index > 0.5
 
+    @property
+    def bimodality_coefficient(self) -> float:
+        return getattr(self, "_bimodality", 0.0)
+
+    @property
+    def polarization_type(self) -> str:
+        bc = self.bimodality_coefficient
+        if bc > 0.555:
+            return "bimodal"
+        elif self.polarization_index > 0.3 and self.confidence_mean > 0.5:
+            return "high_conviction_split"
+        elif self.polarization_index > 0.3:
+            return "noisy_split"
+        return "unimodal"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "round": self.round_number,
@@ -44,6 +59,8 @@ class ConsensusState:
             "std_dev": round(self.std_deviation, 4),
             "agreement_ratio": round(self.agreement_ratio, 4),
             "polarization": round(self.polarization_index, 4),
+            "bimodality": round(self.bimodality_coefficient, 4),
+            "polarization_type": self.polarization_type,
             "confidence": round(self.confidence_mean, 4),
             "groups": self.group_count,
             "direction": self.dominant_direction,
@@ -97,6 +114,17 @@ class ConsensusTracker:
 
         strength = agreement_ratio * (1 - std_op) * float(np.mean(confidences))
 
+        n = len(opinions)
+        if n > 3 and std_op > 1e-6:
+            mean_centered = opinions - mean_op
+            skewness = float(np.mean(mean_centered**3) / (std_op**3))
+            kurtosis = float(np.mean(mean_centered**4) / (std_op**4)) - 3.0
+            bimodality = (skewness**2 + 1) / (
+                kurtosis + 3 * (n - 1) ** 2 / ((n - 2) * (n - 3))
+            )
+        else:
+            bimodality = 0.0
+
         distribution = {
             "strong_bull": int(np.sum(opinions > 0.5)),
             "bull": int(np.sum((opinions > 0.1) & (opinions <= 0.5))),
@@ -123,6 +151,7 @@ class ConsensusTracker:
             strength=strength,
             distribution=distribution,
         )
+        state._bimodality = bimodality
 
         self._history.append(state)
         return state

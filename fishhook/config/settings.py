@@ -113,6 +113,14 @@ class SlippageConfig(BaseModel):
     min_acceptable_edge: float = 0.02
 
 
+class AdaptiveWeightsConfig(BaseModel):
+    enabled: bool = True
+    learning_rate: float = 0.05
+    min_weight: float = 0.1
+    max_weight: float = 0.9
+    window_size: int = 50
+
+
 class PipelineConfig(BaseSettings):
     model_config = {"env_prefix": "MCP_PARSE_"}
 
@@ -128,6 +136,9 @@ class PipelineConfig(BaseSettings):
     credibility: CredibilityConfig = Field(default_factory=CredibilityConfig)
     portfolio_heat: PortfolioHeatConfig = Field(default_factory=PortfolioHeatConfig)
     slippage: SlippageConfig = Field(default_factory=SlippageConfig)
+    adaptive_weights: AdaptiveWeightsConfig = Field(
+        default_factory=AdaptiveWeightsConfig
+    )
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> PipelineConfig:

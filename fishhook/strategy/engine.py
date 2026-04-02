@@ -11,6 +11,7 @@ from fishhook.ingestion.credibility import CredibilityScorer
 from fishhook.ingestion.deduplicator import SignalDeduplicator
 from fishhook.ingestion.sources import OrderBookSignalSource, SourceSignal
 from fishhook.market.models import Market, OrderSide, TradeSignal
+from fishhook.strategy.adaptive_weights import AdaptiveWeightLearner
 from fishhook.strategy.portfolio_heat import PortfolioHeatTracker
 from fishhook.swarm.world import SimulationResult, SimulationWorld
 from fishhook.utils.logging import get_logger
@@ -37,6 +38,7 @@ class StrategyEngine:
         credibility: CredibilityScorer | None = None,
         orderbook_source: OrderBookSignalSource | None = None,
         portfolio_heat: PortfolioHeatTracker | None = None,
+        adaptive_weights: AdaptiveWeightLearner | None = None,
     ) -> None:
         self._config = config or StrategyConfig()
         self._swarm = swarm or SimulationWorld()
@@ -46,6 +48,7 @@ class StrategyEngine:
         self._credibility = credibility
         self._orderbook_source = orderbook_source
         self._portfolio_heat = portfolio_heat
+        self._adaptive_weights = adaptive_weights
 
     async def initialize(self, num_agents: int = 1000) -> None:
         if not self._initialized:
@@ -208,12 +211,17 @@ class StrategyEngine:
         swarm_opinion = swarm_signal["signal"]
         swarm_confidence = swarm_signal["confidence"]
 
-        combined_signal = (
-            swarm_opinion * self._config.simulation_weight
-            + market_signal * self._config.data_weight
-        )
+        if self._adaptive_weights:
+            sim_weight, data_weight = self._adaptive_weights.get_weights(
+                market.category
+            )
+        else:
+            sim_weight = self._config.simulation_weight
+            data_weight = self._config.data_weight
 
-        total_weight = self._config.simulation_weight + self._config.data_weight
+        combined_signal = swarm_opinion * sim_weight + market_signal * data_weight
+
+        total_weight = sim_weight + data_weight
         if total_weight > 0:
             combined_signal /= total_weight
 
@@ -286,4 +294,6 @@ class StrategyEngine:
         }
         if self._portfolio_heat:
             summary["portfolio_heat"] = self._portfolio_heat.get_status()
+        if self._adaptive_weights:
+            summary["adaptive_weights"] = self._adaptive_weights.get_status()
         return summary

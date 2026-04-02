@@ -21,6 +21,7 @@ from fishhook.market.models import TradeSignal
 from fishhook.market.slippage import SlippageModel
 from fishhook.strategy.engine import StrategyEngine
 from fishhook.strategy.portfolio_heat import PortfolioHeatTracker
+from fishhook.strategy.adaptive_weights import AdaptiveWeightLearner
 from fishhook.swarm.world import SimulationWorld
 from fishhook.utils.logging import get_logger, setup_logging
 
@@ -98,6 +99,17 @@ class PipelineOrchestrator:
                 min_acceptable_edge=self._config.slippage.min_acceptable_edge,
             )
 
+        self._adaptive_weights = None
+        if self._config.adaptive_weights.enabled:
+            self._adaptive_weights = AdaptiveWeightLearner(
+                initial_sim_weight=self._config.strategy.simulation_weight,
+                initial_data_weight=self._config.strategy.data_weight,
+                learning_rate=self._config.adaptive_weights.learning_rate,
+                min_weight=self._config.adaptive_weights.min_weight,
+                max_weight=self._config.adaptive_weights.max_weight,
+                window_size=self._config.adaptive_weights.window_size,
+            )
+
         self._orderbook_source = None
         if self._config.data_sources.orderbook_as_signal:
             self._orderbook_source = OrderBookSignalSource(self._market_client)
@@ -121,6 +133,7 @@ class PipelineOrchestrator:
             credibility=self._credibility,
             orderbook_source=self._orderbook_source,
             portfolio_heat=self._portfolio_heat,
+            adaptive_weights=self._adaptive_weights,
         )
 
         self._run_count = 0

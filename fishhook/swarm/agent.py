@@ -123,6 +123,9 @@ class Agent:
         self.group_id: int | None = None
         self._social_connections: list[int] = []
         self._influence_score: float = 0.0
+        self._prediction_count: int = 0
+        self._correct_count: int = 0
+        self._bayesian_receptiveness: float = 1.0
 
     @property
     def social_connections(self) -> list[int]:
@@ -169,7 +172,9 @@ class Agent:
         if external_signal is not None:
             info_component = external_signal * self.personality.information_weight
             components.append(info_component)
-            weights.append(self.personality.information_weight)
+            weights.append(
+                self.personality.information_weight * self._bayesian_receptiveness
+            )
 
         if abs(memory_signal) > 0.01:
             mem_component = memory_signal * self.personality.memory_decay_rate * 10
@@ -202,6 +207,32 @@ class Agent:
         noise = random.gauss(0, 0.1 * (1 - self.confidence))
         return max(-1.0, min(1.0, self.opinion + noise))
 
+    def record_prediction(self, correct: bool) -> None:
+        self._prediction_count += 1
+        if correct:
+            self._correct_count += 1
+
+        if self._prediction_count >= 3:
+            accuracy = self._correct_count / self._prediction_count
+            if accuracy < 0.35:
+                self._bayesian_receptiveness = min(
+                    2.0, self._bayesian_receptiveness * 1.1
+                )
+            elif accuracy > 0.65:
+                self._bayesian_receptiveness = max(
+                    0.3, self._bayesian_receptiveness * 0.95
+                )
+
+    @property
+    def bayesian_receptiveness(self) -> float:
+        return self._bayesian_receptiveness
+
+    @property
+    def prediction_accuracy(self) -> float:
+        if self._prediction_count == 0:
+            return 0.5
+        return self._correct_count / self._prediction_count
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -209,6 +240,9 @@ class Agent:
             "confidence": self.confidence,
             "group_id": self.group_id,
             "connections": len(self._social_connections),
+            "bayesian_receptiveness": round(self._bayesian_receptiveness, 3),
+            "prediction_accuracy": round(self.prediction_accuracy, 3),
+            "predictions": self._prediction_count,
             "personality": {
                 "risk_tolerance": self.personality.risk_tolerance,
                 "conformity_bias": self.personality.conformity_bias,
