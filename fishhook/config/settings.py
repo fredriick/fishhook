@@ -121,6 +121,26 @@ class AdaptiveWeightsConfig(BaseModel):
     window_size: int = 50
 
 
+class TelegramConfig(BaseModel):
+    enabled: bool = False
+    bot_token: str = ""
+    chat_id: str = ""
+
+
+class WebhookConfig(BaseModel):
+    enabled: bool = False
+    url: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
+class AlertingConfig(BaseModel):
+    enabled: bool = False
+    min_severity: str = "warning"
+    rate_limit_seconds: int = 60
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    webhook: WebhookConfig = Field(default_factory=WebhookConfig)
+
+
 class PipelineConfig(BaseSettings):
     model_config = {"env_prefix": "MCP_PARSE_"}
 
@@ -139,6 +159,7 @@ class PipelineConfig(BaseSettings):
     adaptive_weights: AdaptiveWeightsConfig = Field(
         default_factory=AdaptiveWeightsConfig
     )
+    alerting: AlertingConfig = Field(default_factory=AlertingConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> PipelineConfig:

@@ -23,7 +23,17 @@ from fishhook.strategy.engine import StrategyEngine
 from fishhook.strategy.portfolio_heat import PortfolioHeatTracker
 from fishhook.strategy.adaptive_weights import AdaptiveWeightLearner
 from fishhook.swarm.world import SimulationWorld
-from fishhook.utils.logging import get_logger, setup_logging
+from fishhook.utils.alerting import (
+    AlertManager,
+    TelegramChannel,
+    WebhookChannel,
+    AlertSeverity,
+)
+from fishhook.utils.logging import (
+    generate_correlation_id,
+    get_logger,
+    setup_logging,
+)
 
 logger = get_logger("orchestrator")
 
@@ -32,6 +42,7 @@ logger = get_logger("orchestrator")
 class PipelineRun:
     run_id: int
     started_at: float
+    correlation_id: str = ""
     markets_analyzed: int = 0
     signals_generated: int = 0
     trades_executed: int = 0
@@ -41,6 +52,7 @@ class PipelineRun:
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
+            "correlation_id": self.correlation_id,
             "markets_analyzed": self.markets_analyzed,
             "signals_generated": self.signals_generated,
             "trades_executed": self.trades_executed,
@@ -110,6 +122,34 @@ class PipelineOrchestrator:
                 window_size=self._config.adaptive_weights.window_size,
             )
 
+        self._alert_manager = None
+        if self._config.alerting.enabled:
+            sev_map = {
+                "info": AlertSeverity.INFO,
+                "warning": AlertSeverity.WARNING,
+                "critical": AlertSeverity.CRITICAL,
+            }
+            self._alert_manager = AlertManager(
+                min_severity=sev_map.get(
+                    self._config.alerting.min_severity, AlertSeverity.WARNING
+                ),
+                rate_limit_seconds=self._config.alerting.rate_limit_seconds,
+            )
+            if self._config.alerting.telegram.enabled:
+                self._alert_manager.add_channel(
+                    TelegramChannel(
+                        bot_token=self._config.alerting.telegram.bot_token,
+                        chat_id=self._config.alerting.telegram.chat_id,
+                    )
+                )
+            if self._config.alerting.webhook.enabled:
+                self._alert_manager.add_channel(
+                    WebhookChannel(
+                        url=self._config.alerting.webhook.url,
+                        headers=self._config.alerting.webhook.headers,
+                    )
+                )
+
         self._orderbook_source = None
         if self._config.data_sources.orderbook_as_signal:
             self._orderbook_source = OrderBookSignalSource(self._market_client)
@@ -162,6 +202,8 @@ class PipelineOrchestrator:
         await self._scraper.stop()
         await self._market_client.close()
         await self._source_manager.close()
+        if self._alert_manager:
+            await self._alert_manager.close()
         logger.info("Pipeline orchestrator stopped")
 
     async def run_once(
@@ -170,7 +212,12 @@ class PipelineOrchestrator:
         max_markets: int = 10,
     ) -> PipelineRun:
         self._run_count += 1
-        run = PipelineRun(run_id=self._run_count, started_at=time.time())
+        cid = generate_correlation_id()
+        run = PipelineRun(
+            run_id=self._run_count, started_at=time.time(), correlation_id=cid
+        )
+
+        logger.info(f"Run {run.run_id} started [correlation_id={cid}]")
 
         try:
             markets = await self._market_client.get_markets(
@@ -200,10 +247,25 @@ class PipelineOrchestrator:
 
         except Exception as e:
             error_msg = f"Run {run.run_id} error: {e}"
-            logger.error(error_msg)
+            logger.error(error_msg, correlation_id=cid)
             run.errors.append(error_msg)
             if self._circuit_breaker:
                 self._circuit_breaker.record_api_error()
+            if self._alert_manager:
+                await self._alert_manager.warning(
+                    "Pipeline Run Error",
+                    f"Run {run.run_id}: {e}",
+                    run_id=run.run_id,
+                )
+
+        if self._circuit_breaker and not self._circuit_breaker.is_trading_allowed:
+            if self._alert_manager:
+                state = self._circuit_breaker.get_status()
+                await self._alert_manager.critical(
+                    "Circuit Breaker Tripped",
+                    f"Trading halted: {state.get('events', [{}])[-1].get('reason', 'unknown')}",
+                    drawdown=state.get("drawdown_pct"),
+                )
 
         run.elapsed_seconds = time.time() - run.started_at
         self._runs.append(run)
@@ -211,7 +273,7 @@ class PipelineOrchestrator:
         logger.info(
             f"Run {run.run_id} complete: {run.markets_analyzed} markets, "
             f"{run.signals_generated} signals, {run.trades_executed} trades "
-            f"({run.elapsed_seconds:.1f}s)"
+            f"({run.elapsed_seconds:.1f}s) [correlation_id={cid}]"
         )
 
         return run
@@ -309,6 +371,13 @@ class PipelineOrchestrator:
 
         if self._portfolio_heat:
             status["portfolio_heat"] = self._portfolio_heat.get_status()
+
+        if self._alert_manager:
+            status["alerts"] = {
+                "enabled": True,
+                "channels": len(self._alert_manager._channels),
+                "recent": self._alert_manager.get_history(5),
+            }
 
         return status
 

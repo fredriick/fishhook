@@ -89,3 +89,16 @@ adaptive_weights:
   min_weight: 0.1
   max_weight: 0.9
   window_size: 50
+
+alerting:
+  enabled: false
+  min_severity: warning
+  rate_limit_seconds: 60
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
+  webhook:
+    enabled: false
+    url: ""
+    headers: {}
