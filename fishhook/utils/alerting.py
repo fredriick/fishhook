@@ -21,6 +21,14 @@ class AlertSeverity(Enum):
     WARNING = "warning"
     CRITICAL = "critical"
 
+    @property
+    def rank(self) -> int:
+        return {
+            AlertSeverity.INFO: 0,
+            AlertSeverity.WARNING: 1,
+            AlertSeverity.CRITICAL: 2,
+        }[self]
+
 
 @dataclass
 class Alert:
@@ -140,7 +148,7 @@ class AlertManager:
         self._channels.append(channel)
 
     async def send(self, alert: Alert) -> int:
-        if alert.severity.value < self._min_severity.value:
+        if alert.severity.rank < self._min_severity.rank:
             return 0
 
         key = f"{alert.severity.value}:{alert.title}"

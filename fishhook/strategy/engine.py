@@ -9,7 +9,7 @@ from typing import Any
 from fishhook.config.settings import StrategyConfig
 from fishhook.ingestion.credibility import CredibilityScorer
 from fishhook.ingestion.deduplicator import SignalDeduplicator
-from fishhook.ingestion.sources import OrderBookSignalSource, SourceSignal
+from fishhook.ingestion.sources import OrderBookSignalSource
 from fishhook.market.models import Market, OrderSide, TradeSignal
 from fishhook.strategy.adaptive_weights import AdaptiveWeightLearner
 from fishhook.strategy.portfolio_heat import PortfolioHeatTracker
@@ -59,7 +59,9 @@ class StrategyEngine:
     def _is_signal_stale(self, market_id: str) -> bool:
         if self._config.signal_ttl_seconds <= 0:
             return False
-        last_time = self._state.signal_timestamps.get(market_id, 0)
+        if market_id not in self._state.signal_timestamps:
+            return False
+        last_time = self._state.signal_timestamps[market_id]
         return (time.time() - last_time) > self._config.signal_ttl_seconds
 
     async def analyze_market(
@@ -76,6 +78,7 @@ class StrategyEngine:
 
         if self._is_signal_stale(market.id):
             logger.debug(f"Signal for {market.id} is stale, skipping")
+            return None
 
         market_signal = await self._compute_market_signal(market, scraped_data)
 
