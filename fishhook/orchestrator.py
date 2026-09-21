@@ -164,6 +164,7 @@ class PipelineOrchestrator:
             circuit_breaker=self._circuit_breaker,
             paper_trading=self._config.polymarket.testnet,
             slippage_model=self._slippage_model,
+            max_trades_per_hour=self._config.strategy.max_trades_per_hour,
         )
         self._swarm = SimulationWorld(self._config.swarm)
         self._strategy = StrategyEngine(
