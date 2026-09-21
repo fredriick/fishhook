@@ -89,13 +89,7 @@ class EdgeAttributionTracker:
                     attr.actual_direction = "short"
                 else:
                     attr.actual_direction = "flat"
-                attr.was_correct = (
-                    attr.predicted_direction == attr.actual_direction
-                    and realized_pnl > 0
-                ) or (
-                    attr.predicted_direction != attr.actual_direction
-                    and realized_pnl > 0
-                )
+                attr.was_correct = attr.predicted_direction == attr.actual_direction
                 break
 
     def get_metrics(self) -> dict[str, Any]:
