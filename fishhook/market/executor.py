@@ -11,7 +11,7 @@ from fishhook.config.settings import PolymarketConfig
 from fishhook.market.attribution import EdgeAttributionTracker
 from fishhook.market.circuit_breaker import CircuitBreaker
 from fishhook.market.client import PolymarketClient
-from fishhook.market.models import OrderSide, OrderType, Position, TradeSignal
+from fishhook.market.models import OrderSide, Position, TradeSignal
 from fishhook.market.slippage import SlippageEstimate, SlippageModel
 from fishhook.utils.logging import get_logger
 
@@ -61,9 +61,11 @@ class TradeExecutor:
         circuit_breaker: CircuitBreaker | None = None,
         paper_trading: bool = False,
         slippage_model: SlippageModel | None = None,
+        max_trades_per_hour: int = 10,
     ) -> None:
         self._client = client
         self._config = config or PolymarketConfig()
+        self._max_trades_per_hour = max(1, int(max_trades_per_hour))
         self._positions: dict[str, Position] = {}
         self._trade_history: list[ExecutedTrade] = []
         self._last_trade_time: float = 0
@@ -97,7 +99,7 @@ class TradeExecutor:
         if elapsed > 3600:
             self._trades_this_hour = 0
             self._hour_start = time.time()
-        return max(0, 10 - self._trades_this_hour)
+        return max(0, self._max_trades_per_hour - self._trades_this_hour)
 
     def _check_rate_limits(self) -> bool:
         if self.trades_remaining_this_hour <= 0:
