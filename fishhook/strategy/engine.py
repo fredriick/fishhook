@@ -9,7 +9,7 @@ from typing import Any
 from fishhook.config.settings import StrategyConfig
 from fishhook.ingestion.credibility import CredibilityScorer
 from fishhook.ingestion.deduplicator import SignalDeduplicator
-from fishhook.ingestion.sources import OrderBookSignalSource
+from fishhook.ingestion.sources import SignalSourceManager
 from fishhook.market.models import Market, OrderSide, TradeSignal
 from fishhook.strategy.adaptive_weights import AdaptiveWeightLearner
 from fishhook.strategy.portfolio_heat import PortfolioHeatTracker
@@ -36,7 +36,7 @@ class StrategyEngine:
         swarm: SimulationWorld | None = None,
         deduplicator: SignalDeduplicator | None = None,
         credibility: CredibilityScorer | None = None,
-        orderbook_source: OrderBookSignalSource | None = None,
+        source_manager: SignalSourceManager | None = None,
         portfolio_heat: PortfolioHeatTracker | None = None,
         adaptive_weights: AdaptiveWeightLearner | None = None,
     ) -> None:
@@ -46,7 +46,7 @@ class StrategyEngine:
         self._initialized = False
         self._deduplicator = deduplicator
         self._credibility = credibility
-        self._orderbook_source = orderbook_source
+        self._source_manager = source_manager
         self._portfolio_heat = portfolio_heat
         self._adaptive_weights = adaptive_weights
 
@@ -173,13 +173,15 @@ class StrategyEngine:
                     metadata={"market_id": market.id},
                 )
 
-        if self._orderbook_source:
-            ob_signals = await self._orderbook_source.fetch_signals(
+        if self._source_manager:
+            source_signals = await self._source_manager.fetch_all(
                 market_id=market.id, token_ids=[market.id]
             )
-            for ob_sig in ob_signals:
-                signal += ob_sig.value * ob_sig.confidence * 0.3
-                weight_sum += 0.3
+            for source_name, sigs in source_signals.items():
+                source_weight = 0.3 if source_name == "orderbook" else 0.25
+                for sig in sigs:
+                    signal += sig.value * sig.confidence * source_weight
+                    weight_sum += source_weight
 
         if weight_sum > 0:
             signal /= weight_sum

@@ -72,7 +72,7 @@ class TradeExecutor:
         self._trades_this_hour: int = 0
         self._hour_start: float = time.time()
         self._circuit_breaker = circuit_breaker
-        self._paper_trading = paper_trading or self._config.testnet
+        self._paper_trading = paper_trading or self._config.testnet or self._config.paper_trading
         self._paper_positions: dict[str, Position] = {}
         self._slippage_model = slippage_model
         self._attribution = EdgeAttributionTracker()

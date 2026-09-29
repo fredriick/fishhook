@@ -13,7 +13,7 @@ from fishhook.config.settings import PipelineConfig
 from fishhook.ingestion.credibility import CredibilityScorer
 from fishhook.ingestion.deduplicator import SignalDeduplicator
 from fishhook.ingestion.engine import ScrapingEngine
-from fishhook.ingestion.sources import OrderBookSignalSource, SignalSourceManager
+from fishhook.ingestion.sources import DuneAnalytics, OrderBookSignalSource, SignalSourceManager
 from fishhook.market.circuit_breaker import CircuitBreaker
 from fishhook.market.client import PolymarketClient
 from fishhook.market.executor import TradeExecutor
@@ -151,18 +151,26 @@ class PipelineOrchestrator:
                 )
 
         self._orderbook_source = None
+        self._source_manager = SignalSourceManager()
+
+        dune_config = self._config.data_sources.dune
+        if dune_config.query_ids or dune_config.api_key:
+            self._source_manager.register(
+                DuneAnalytics(
+                    api_key=dune_config.api_key,
+                    query_ids=dune_config.query_ids,
+                )
+            )
+
         if self._config.data_sources.orderbook_as_signal:
             self._orderbook_source = OrderBookSignalSource(self._market_client)
-
-        self._source_manager = SignalSourceManager()
-        if self._orderbook_source:
             self._source_manager.register(self._orderbook_source)
 
         self._executor = TradeExecutor(
             self._market_client,
             self._config.polymarket,
             circuit_breaker=self._circuit_breaker,
-            paper_trading=self._config.polymarket.testnet,
+            paper_trading=self._config.polymarket.paper_trading,
             slippage_model=self._slippage_model,
             max_trades_per_hour=self._config.strategy.max_trades_per_hour,
         )
@@ -172,7 +180,7 @@ class PipelineOrchestrator:
             self._swarm,
             deduplicator=self._deduplicator,
             credibility=self._credibility,
-            orderbook_source=self._orderbook_source,
+            source_manager=self._source_manager,
             portfolio_heat=self._portfolio_heat,
             adaptive_weights=self._adaptive_weights,
         )
@@ -359,6 +367,7 @@ class PipelineOrchestrator:
             "strategy": self._strategy.get_state_summary(),
             "scraper_tokens": len(self._scraper.get_dynamic_tokens()),
             "cached_data": len(self._scraped_data_cache),
+            "data_sources": self._source_manager.to_dict(),
         }
 
         if self._circuit_breaker:

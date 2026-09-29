@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--testnet", action="store_true", help="Run in testnet mode (no real trades)"
     )
+    run_parser.add_argument(
+        "--paper",
+        action="store_true",
+        help="Paper trade on real market prices (no orders submitted)",
+    )
 
     loop_parser = subparsers.add_parser("loop", help="Run the pipeline in a loop")
     loop_parser.add_argument(
@@ -54,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     loop_parser.add_argument(
         "--testnet", action="store_true", help="Run in testnet mode (no real trades)"
+    )
+    loop_parser.add_argument(
+        "--paper",
+        action="store_true",
+        help="Paper trade on real market prices (no orders submitted)",
     )
 
     sim_parser = subparsers.add_parser("simulate", help="Run swarm simulation only")
@@ -110,6 +120,11 @@ def build_parser() -> argparse.ArgumentParser:
     bt_parser.add_argument(
         "--sweep", action="store_true", help="Run parameter sweep (agents x thresholds)"
     )
+    bt_parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Use live (unresolved) markets with price momentum instead of resolved outcomes",
+    )
 
     halt_parser = subparsers.add_parser(
         "halt", help="Manually halt trading via circuit breaker"
@@ -128,6 +143,8 @@ def build_parser() -> argparse.ArgumentParser:
 async def cmd_run(args: argparse.Namespace, config: PipelineConfig) -> None:
     if getattr(args, "testnet", False):
         config.polymarket.testnet = True
+    if getattr(args, "paper", False):
+        config.polymarket.paper_trading = True
 
     orchestrator = PipelineOrchestrator(config)
     await orchestrator.start()
@@ -143,6 +160,8 @@ async def cmd_run(args: argparse.Namespace, config: PipelineConfig) -> None:
 async def cmd_loop(args: argparse.Namespace, config: PipelineConfig) -> None:
     if getattr(args, "testnet", False):
         config.polymarket.testnet = True
+    if getattr(args, "paper", False):
+        config.polymarket.paper_trading = True
 
     orchestrator = PipelineOrchestrator(config)
     categories = [args.category] if args.category else None
@@ -234,6 +253,7 @@ async def cmd_backtest(args: argparse.Namespace, config: PipelineConfig) -> None
         swarm_config=config.swarm,
         strategy_config=config.strategy,
     )
+    use_resolved = not args.live
 
     if args.sweep:
         print("Running parameter sweep...")
@@ -241,21 +261,28 @@ async def cmd_backtest(args: argparse.Namespace, config: PipelineConfig) -> None
             num_markets=args.markets,
             min_volume=args.min_volume,
             category=args.category,
+            use_resolved=use_resolved,
         )
         print("\n=== SWEEP RESULTS ===\n")
         for key, result in sorted(results.items()):
             m = result.metrics
             print(
-                f"{key}: trades={m.total_trades} win_rate={m.win_rate:.2%} pnl={m.total_pnl:.2f} sharpe={m.sharpe_ratio:.2f}"
+                f"{key}: trades={m.total_trades} win_rate={m.win_rate:.2%} "
+                f"pnl={m.total_pnl:.2f} sharpe={m.sharpe_ratio:.2f} "
+                f"raw_acc={result.raw_accuracy:.2%}"
             )
     else:
-        print(f"Backtesting {args.markets} markets with {args.agents} agents...")
+        mode = "resolved" if use_resolved else "live"
+        print(
+            f"Backtesting {args.markets} {mode} markets with {args.agents} agents..."
+        )
         result = await engine.run(
             num_markets=args.markets,
             min_volume=args.min_volume,
             category=args.category,
             agents=args.agents,
             rounds=args.rounds,
+            use_resolved=use_resolved,
         )
         print(json.dumps(result.to_dict(), indent=2))
 

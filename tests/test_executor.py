@@ -2,6 +2,7 @@
 
 import pytest
 
+from fishhook.config.settings import PolymarketConfig
 from fishhook.market.executor import TradeExecutor
 from fishhook.market.models import OrderSide, TradeSignal
 
@@ -53,3 +54,26 @@ async def test_execute_signal_blocks_after_limit() -> None:
     assert second is not None
     assert third is None
     assert executor.total_trades == 2
+
+
+def test_paper_trading_flag_enables_paper_mode() -> None:
+    executor = TradeExecutor(client=object(), paper_trading=True)
+    assert executor.is_paper_trading is True
+
+
+def test_paper_mode_uses_real_mainnet_prices_when_requested() -> None:
+    config = PolymarketConfig(testnet=False, paper_trading=True)
+    executor = TradeExecutor(client=object(), config=config)
+    assert executor.is_paper_trading is True
+
+
+def test_mainnet_without_paper_flag_is_live() -> None:
+    config = PolymarketConfig(testnet=False, paper_trading=False)
+    executor = TradeExecutor(client=object(), config=config)
+    assert executor.is_paper_trading is False
+
+
+def test_testnet_still_forces_paper_mode() -> None:
+    config = PolymarketConfig(testnet=True, paper_trading=False)
+    executor = TradeExecutor(client=object(), config=config)
+    assert executor.is_paper_trading is True

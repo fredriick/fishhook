@@ -56,6 +56,7 @@ class PolymarketConfig(BaseModel):
     max_position_size: float = 100.0
     min_edge_threshold: float = 0.05
     testnet: bool = True
+    paper_trading: bool = False
 
 
 class StrategyConfig(BaseModel):

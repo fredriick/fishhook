@@ -37,6 +37,7 @@ polymarket:
   max_position_size: 100.0
   min_edge_threshold: 0.05
   testnet: true
+  paper_trading: false
 
 strategy:
   divergence_threshold: 0.1

@@ -113,6 +113,7 @@ fishhook run --testnet --markets 10 --category crypto
 | `--markets`, `-m` | 10 | Max markets to analyze |
 | `--category` | all | Market category filter |
 | `--testnet` | false | Testnet mode (no real trades) |
+| `--paper` | false | Paper trade on real market prices (no orders) |
 
 ### `fishhook loop`
 Run the pipeline continuously.
@@ -127,6 +128,30 @@ fishhook loop --testnet --interval 60 --markets 10
 | `--markets`, `-m` | 10 | Max markets per run |
 | `--category` | all | Market category filter |
 | `--testnet` | false | Testnet mode (no real trades) |
+| `--paper` | false | Paper trade on real market prices (no orders) |
+
+### `fishhook backtest`
+Replay resolved markets and measure whether swarm divergence predicted the correct direction.
+
+```bash
+fishhook backtest --markets 50 --agents 500 --rounds 30
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--markets`, `-m` | 50 | Number of resolved markets to test |
+| `--agents`, `-a` | 500 | Agents per simulation |
+| `--rounds`, `-r` | 30 | Rounds per simulation |
+| `--min-volume` | 1000.0 | Min market volume filter |
+| `--category` | all | Market category filter |
+| `--sweep` | false | Run parameter sweep (agents x thresholds) |
+| `--live` | false | Use live (unresolved) markets with price momentum instead of resolved outcomes |
+
+Resolved mode tests each market's outcome against the swarm; when no pre-resolution
+price snapshot is available (the CLOB history endpoint only serves a rolling ~1-2
+week window) it falls back to the documented 50/50 open-price assumption, so the
+`raw_accuracy` metrics isolate the swarm's directional predictive power rather than
+trading the final, already-circular closing price.
 
 ### `fishhook status`
 Print current pipeline state as JSON.
@@ -231,6 +256,7 @@ polymarket:
   max_position_size: 100.0
   min_edge_threshold: 0.05
   testnet: true                    # Set to false for live trading
+  paper_trading: false             # Paper trade on real prices (no orders)
 
 strategy:
   divergence_threshold: 0.1       # Min edge to generate a signal
