@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -29,6 +29,9 @@ class BacktestMetrics:
     trades_by_direction: dict[str, int]
     accuracy_by_direction: dict[str, float]
     cumulative_pnl: list[float]
+    trades_by_category: dict[str, int] = field(default_factory=dict)
+    accuracy_by_category: dict[str, float] = field(default_factory=dict)
+    pnl_by_category: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +57,13 @@ class BacktestMetrics:
             "trades_by_direction": self.trades_by_direction,
             "accuracy_by_direction": {
                 k: round(v, 4) for k, v in self.accuracy_by_direction.items()
+            },
+            "trades_by_category": self.trades_by_category,
+            "accuracy_by_category": {
+                k: round(v, 4) for k, v in self.accuracy_by_category.items()
+            },
+            "pnl_by_category": {
+                k: round(v, 4) for k, v in self.pnl_by_category.items()
             },
             "equity_curve": self.cumulative_pnl[:200],
         }
@@ -145,6 +155,26 @@ class BacktestMetrics:
                 1 for t in sell_trades if t.pnl > 0
             ) / len(sell_trades)
 
+        # By category
+        category_counts: dict[str, int] = {}
+        category_wins: dict[str, int] = {}
+        category_pnl: dict[str, float] = {}
+        for t in trades:
+            cat = t.category or "unknown"
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+            category_pnl[cat] = category_pnl.get(cat, 0.0) + t.pnl
+            if t.pnl > 0:
+                category_wins[cat] = category_wins.get(cat, 0) + 1
+
+        trades_by_category = dict(category_counts)
+        accuracy_by_category = {}
+        for cat, count in category_counts.items():
+            accuracy_by_category[cat] = (
+                category_wins.get(cat, 0) / count if count else 0.0
+            )
+
+        pnl_by_category = dict(category_pnl)
+
         return BacktestMetrics(
             total_markets=len(set(t.market_id for t in trades)),
             total_trades=total,
@@ -164,4 +194,7 @@ class BacktestMetrics:
             trades_by_direction=trades_by_direction,
             accuracy_by_direction=accuracy_by_direction,
             cumulative_pnl=cum_pnl,
+            trades_by_category=trades_by_category,
+            accuracy_by_category=accuracy_by_category,
+            pnl_by_category=pnl_by_category,
         )

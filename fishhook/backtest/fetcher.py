@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -50,8 +51,13 @@ class ResolvedMarket:
             "resolution_price": self.resolution_price,
             "resolved": self.resolved_outcome,
             "volume": self.volume,
+            "liquidity": self.liquidity,
             "closing_price": self.closing_price,
             "was_yes": self.was_yes_winner,
+            "end_date": self.end_date.isoformat() if self.end_date else None,
+            "category": self.category,
+            "slug": self.slug,
+            "condition_id": self.condition_id,
         }
 
 
@@ -140,6 +146,7 @@ class HistoricalDataFetcher:
                             "volume": volume,
                             "liquidity": float(item.get("liquidity", 0)),
                             "closed": is_closed,
+                            "category": self._market_category(item),
                             "end_date": item.get("endDate"),
                         }
                     )
@@ -252,13 +259,26 @@ class HistoricalDataFetcher:
                 volume=volume,
                 liquidity=float(data.get("liquidity", 0)),
                 end_date=end_date,
-                category=data.get("category", ""),
+                category=self._market_category(data),
                 slug=data.get("slug", ""),
                 condition_id=data.get("conditionId", ""),
             )
         except (ValueError, KeyError, TypeError) as e:
             logger.debug(f"Skipping market: {e}")
             return None
+
+    @staticmethod
+    def _market_category(data: dict[str, Any]) -> str:
+        category = data.get("category") or ""
+        if category:
+            return str(category)
+
+        tags = data.get("tags") or ""
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(",") if t.strip()]
+        elif not isinstance(tags, list):
+            tags = []
+        return str(tags[0]) if tags else ""
 
     def _save_to_cache(self, markets: list[ResolvedMarket], path: Path) -> None:
         data = [m.to_dict() for m in markets]
@@ -271,6 +291,13 @@ class HistoricalDataFetcher:
             data = json.load(f)
         markets = []
         for item in data:
+            end_date = None
+            if item.get("end_date"):
+                try:
+                    end_date = datetime.fromisoformat(item["end_date"])
+                except (ValueError, TypeError):
+                    pass
+
             markets.append(
                 ResolvedMarket(
                     id=item["id"],
@@ -280,14 +307,63 @@ class HistoricalDataFetcher:
                     resolution_price=item["resolution_price"],
                     resolved_outcome=item["resolved"],
                     volume=item["volume"],
-                    liquidity=0,
-                    end_date=None,
-                    category="",
-                    slug="",
-                    condition_id="",
+                    liquidity=item.get("liquidity", 0),
+                    end_date=end_date,
+                    category=item.get("category", ""),
+                    slug=item.get("slug", ""),
+                    condition_id=item.get("condition_id", ""),
                 )
             )
         return markets
+
+    async def fetch_entry_price(
+        self,
+        condition_id: str,
+        lookback_days: float = 3.0,
+    ) -> float | None:
+        """Best-effort pre-resolution price snapshot.
+
+        Uses the public CLOB prices-history endpoint, which serves only a rolling
+        window (roughly the last 1-2 weeks). Older resolved markets return None;
+        callers then fall back to a documented entry-price assumption.
+        """
+        if not condition_id:
+            return None
+
+        end_ts = int(time.time())
+        start_ts = int(end_ts - lookback_days * 86400 * 2)
+        target_ts = int(end_ts - lookback_days * 86400)
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(
+                    f"{self._config.api_base_url}/prices-history",
+                    params={
+                        "market": condition_id,
+                        "interval": "1d",
+                        "fidelity": "5",
+                        "startTs": start_ts,
+                        "endTs": end_ts,
+                    },
+                )
+                resp.raise_for_status()
+                history = resp.json().get("history", [])
+                if not history:
+                    return None
+
+                best: float | None = None
+                for ts, price in history:
+                    if ts <= target_ts:
+                        best = float(price)
+                if best is None:
+                    best = float(history[0][1])
+
+                if 0.0 < best < 1.0:
+                    return best
+                return None
+        except Exception as e:
+            logger.warning(f"Entry price fetch failed for {condition_id}: {e}")
+            return None
 
     async def fetch_with_price_history(
         self,
