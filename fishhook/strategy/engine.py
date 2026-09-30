@@ -165,13 +165,13 @@ class StrategyEngine:
                 signal += social * 0.2
                 weight_sum += 0.2
 
-            if self._deduplicator:
-                self._deduplicator.add(
-                    value=implied_signal,
-                    source="implied_probability",
-                    category="price",
-                    metadata={"market_id": market.id},
-                )
+        if self._deduplicator:
+            self._deduplicator.add(
+                value=implied_signal,
+                source="implied_probability",
+                category="price",
+                metadata={"market_id": market.id},
+            )
 
         if self._source_manager:
             source_signals = await self._source_manager.fetch_all(
