@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, ClassVar, Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -176,3 +178,40 @@ class PipelineConfig(BaseSettings):
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             yaml.dump(self.model_dump(mode="json"), f, default_flow_style=False)
+
+    # Keys that are zeroed before fingerprinting/snapshots so secrets never
+    # leak into version identifiers or persisted config snapshots.
+    SECRET_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"api_key", "api_secret", "passphrase", "bot_token", "chat_id", "headers"}
+    )
+
+    @staticmethod
+    def _redact(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                k: ("***" if k in PipelineConfig.SECRET_FIELDS else PipelineConfig._redact(v))
+                for k, v in value.items()
+            }
+        if isinstance(value, list):
+            return [PipelineConfig._redact(v) for v in value]
+        return value
+
+    def fingerprint(self) -> str:
+        """Deterministic sha256 of the effective config with secrets redacted.
+
+        Identical parameters produce an identical version across runs and
+        machines; secret changes do not change the version.
+        """
+        redacted = self._redact(self.model_dump(mode="json"))
+        canonical = json.dumps(
+            redacted, sort_keys=True, separators=(",", ":"), default=str
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def config_tag(self) -> str:
+        """Short, human-friendly version identifier."""
+        return self.fingerprint()[:12]
+
+    def snapshot(self) -> dict[str, Any]:
+        """Redacted, JSON-serializable view of the active config."""
+        return self._redact(self.model_dump(mode="json"))

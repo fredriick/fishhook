@@ -137,6 +137,13 @@ def build_parser() -> argparse.ArgumentParser:
         "resume", help="Resume trading after circuit breaker halt"
     )
 
+    config_parser = subparsers.add_parser(
+        "config", help="Show active config version and snapshot"
+    )
+    config_parser.add_argument(
+        "--path", action="store_true", help="Print only the snapshot file path"
+    )
+
     return parser
 
 
@@ -305,6 +312,28 @@ async def cmd_resume(args: argparse.Namespace, config: PipelineConfig) -> None:
         print("Circuit breaker is not enabled in config")
 
 
+async def cmd_config(args: argparse.Namespace, config: PipelineConfig) -> None:
+    version = config.fingerprint()
+    snapshot_path = config.data_dir / "config_snapshots" / f"{version}.json"
+
+    if getattr(args, "path", False):
+        print(snapshot_path)
+        return
+
+    print(
+        json.dumps(
+            {
+                "config_version": version,
+                "config_tag": config.config_tag(),
+                "config_snapshot_path": str(snapshot_path),
+                "config": config.snapshot(),
+            },
+            indent=2,
+            default=str,
+        )
+    )
+
+
 async def main_async() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -326,6 +355,7 @@ async def main_async() -> None:
         "backtest": cmd_backtest,
         "halt": cmd_halt,
         "resume": cmd_resume,
+        "config": cmd_config,
     }
 
     handler = commands.get(args.command)

@@ -43,6 +43,7 @@ class PipelineRun:
     run_id: int
     started_at: float
     correlation_id: str = ""
+    config_version: str = ""
     markets_analyzed: int = 0
     signals_generated: int = 0
     trades_executed: int = 0
@@ -53,6 +54,7 @@ class PipelineRun:
         return {
             "run_id": self.run_id,
             "correlation_id": self.correlation_id,
+            "config_version": self.config_version,
             "markets_analyzed": self.markets_analyzed,
             "signals_generated": self.signals_generated,
             "trades_executed": self.trades_executed,
@@ -190,6 +192,33 @@ class PipelineOrchestrator:
         self._running = False
         self._scraped_data_cache: dict[str, dict[str, Any]] = {}
 
+        self._config_version = self._config.fingerprint()
+        self._config_snapshot_path = (
+            self._config.data_dir / "config_snapshots"
+        ) / f"{self._config_version}.json"
+        self._persist_config_snapshot()
+
+    def _persist_config_snapshot(self) -> None:
+        """Write the redacted config once per version so past runs are
+        reproducible against the exact parameters that were active."""
+        try:
+            if self._config_snapshot_path.exists():
+                return
+            self._config_snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._config_snapshot_path, "w") as f:
+                json.dump(
+                    {
+                        "config_version": self._config_version,
+                        "saved_at": time.time(),
+                        "config": self._config.snapshot(),
+                    },
+                    f,
+                    indent=2,
+                    default=str,
+                )
+        except OSError as e:
+            logger.warning(f"Could not persist config snapshot: {e}")
+
     @property
     def is_running(self) -> bool:
         return self._running
@@ -223,7 +252,10 @@ class PipelineOrchestrator:
         self._run_count += 1
         cid = generate_correlation_id()
         run = PipelineRun(
-            run_id=self._run_count, started_at=time.time(), correlation_id=cid
+            run_id=self._run_count,
+            started_at=time.time(),
+            correlation_id=cid,
+            config_version=self._config_version,
         )
 
         logger.info(f"Run {run.run_id} started [correlation_id={cid}]")
@@ -362,6 +394,8 @@ class PipelineOrchestrator:
         status: dict[str, Any] = {
             "running": self._running,
             "total_runs": len(self._runs),
+            "config_version": self._config_version,
+            "config_snapshot": str(self._config_snapshot_path),
             "total_trades": self._executor.total_trades,
             "portfolio": self._executor.get_portfolio_summary(),
             "strategy": self._strategy.get_state_summary(),

@@ -154,11 +154,25 @@ week window) it falls back to the documented 50/50 open-price assumption, so the
 trading the final, already-circular closing price.
 
 ### `fishhook status`
-Print current pipeline state as JSON.
+Print current pipeline state as JSON (includes `config_version` and the config
+snapshot path so any run can be mapped back to the exact parameters that were active).
 
 ```bash
 fishhook status
 ```
+
+### `fishhook config`
+Show the active config version (deterministic sha256 hash of the effective config
+with secrets redacted) plus its full redacted snapshot.
+
+```bash
+fishhook config            # version + snapshot
+fishhook config --path     # snapshot file path only
+```
+
+Every config version is persisted once to `data/config_snapshots/<version>.json`
+(redacted), so backtests and past trading sessions can be reproduced against the
+exact parameters that were live at the time.
 
 ### `fishhook dashboard`
 Launch the web dashboard.
