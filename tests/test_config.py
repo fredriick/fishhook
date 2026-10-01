@@ -26,6 +26,7 @@ def test_fingerprint_ignores_secrets() -> None:
     with_secret.polymarket.api_key = "sk-test"
     with_secret.alerting.telegram.bot_token = "tkn"
     with_secret.data_sources.dune.api_key = "dune-key"
+    with_secret.data_sources.nansen.api_key = "nansen-key"
 
     assert base.fingerprint() == with_secret.fingerprint()
 
@@ -36,6 +37,7 @@ def test_snapshot_redacts_secrets() -> None:
     config.polymarket.api_secret = "sec"
     config.polymarket.passphrase = "phrase"
     config.alerting.telegram.bot_token = "tkn"
+    config.data_sources.nansen.api_key = "nansen-key"
 
     snap = config.snapshot()
 
@@ -43,6 +45,7 @@ def test_snapshot_redacts_secrets() -> None:
     assert snap["polymarket"]["api_secret"] == "***"
     assert snap["polymarket"]["passphrase"] == "***"
     assert snap["alerting"]["telegram"]["bot_token"] == "***"
+    assert snap["data_sources"]["nansen"]["api_key"] == "***"
 
 
 def test_orchestrator_persists_config_snapshot(tmp_path) -> None:

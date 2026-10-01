@@ -286,7 +286,23 @@ strategy:
   data_weight: 0.4                # Weight of scraped data signal
   cooldown_seconds: 60            # Min time between signals
   max_trades_per_hour: 10
+
+data_sources:
+  dune:
+    api_key: ""                   # Set via env: MCP_PARSE_DATA_SOURCES__DUNE__API_KEY
+    query_ids: []
+  nansen:
+    enabled: true
+    api_key: ""                   # Set via env: MCP_PARSE_DATA_SOURCES__NANSEN__API_KEY
+    chain: "ethereum"
+    window_days: 7
+  orderbook_as_signal: true
 ```
+
+If a `data_sources.nansen.api_key` is configured, on-chain net-flow direction for
+the token addresses feeding the strategy is pulled from the Nansen Query API
+(`X-API-Key` auth) and emitted as a `[-1, 1]` smart-money signal. The connector
+is inert without the key.
 
 ### Environment Variables
 
@@ -296,6 +312,7 @@ All config fields can be overridden via env vars with prefix `MCP_PARSE_`:
 MCP_PARSE_POLYMARKET__API_KEY=your_key
 MCP_PARSE_POLYMARKET__TESTNET=false
 MCP_PARSE_SWARM__NUM_AGENTS=2000
+MCP_PARSE_DATA_SOURCES__NANSEN__API_KEY=your_nansen_key
 ```
 
 ## How Each Layer Works

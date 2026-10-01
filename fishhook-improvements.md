@@ -4,11 +4,12 @@ A prioritized list of updates across every layer of the pipeline. No code — ju
 
 > ## Status
 >
-> Most of this roadmap is now implemented. Remaining work: the **Nansen structured source**.
+> Most of this roadmap is now implemented. No remaining work — every item shipped.
 >
 > | Shipped | Remaining |
 > |---|---|
-> | Backtester — resolved-outcome mode, category breakdown | Nansen connector |
+> | Backtester — resolved-outcome mode, category breakdown | — |
+> | Nansen structured source (smart-money net-flow signals) | — |
 > | Circuit breaker incl. `halt` / `resume` | — |
 > | Kelly criterion position sizer | — |
 > | Signal deduplicator (incl. implied-price signal dedup) | — |
@@ -41,7 +42,8 @@ Weight incoming signals by the reliability of their origin. A Reuters article an
 The same news event will appear across dozens of sources within minutes. Without deduplication, your swarm processes the same signal 8–10 times independently, artificially inflating confidence. Normalize signals to canonical events before they enter the simulation.
 
 ### Structured API Sources
-> **Status: Partial** — **Dune** queries and **Polymarket CLOB order-book depth** are wired into the strategy engine via `SignalSourceManager`; **Nansen** remains to be added.
+> **Status: Implemented** — **Dune queries**, **Nansen smart-money flow signals**, and **Polymarket CLOB order-book depth** are wired into the strategy engine via `SignalSourceManager`.
+> The **Nansen** connector (`NansenQuery` in `fishhook/ingestion/sources.py`, configured as `data_sources.nansen`) authenticates with an `X-API-Key` header and converts net token-flow direction over a rolling window into a `[-1, 1]` signal with confidence scaled by transfer count. It is inert until `NANSEN_API_KEY` / `data_sources.nansen.api_key` is set, so the pipeline runs and CI stays green without credentials.
 Supplement Playwright scraping with direct API integrations for higher-reliability data:
 - **Dune Analytics** — on-chain activity, wallet flows, protocol metrics
 - **Nansen** — smart money wallet signals

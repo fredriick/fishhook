@@ -88,8 +88,19 @@ class DuneConfig(BaseModel):
     query_ids: list[int] = Field(default_factory=list)
 
 
+class NansenConfig(BaseModel):
+    enabled: bool = True
+    api_key: str = ""
+    base_url: str = "https://api.nansen.ai"
+    chain: str = "ethereum"
+    window_days: int = 7
+    page_size: int = 100
+    category: str = "on_chain"
+
+
 class DataSourcesConfig(BaseModel):
     dune: DuneConfig = Field(default_factory=DuneConfig)
+    nansen: NansenConfig = Field(default_factory=NansenConfig)
     orderbook_as_signal: bool = True
 
 

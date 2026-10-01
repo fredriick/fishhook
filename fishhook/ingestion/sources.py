@@ -28,10 +28,17 @@ class SourceSignal:
 
 
 class DataSource(ABC):
-    def __init__(self, name: str, api_key: str = "", base_url: str = "") -> None:
+    def __init__(
+        self,
+        name: str,
+        api_key: str = "",
+        base_url: str = "",
+        auth_header: str | None = None,
+    ) -> None:
         self.name = name
         self._api_key = api_key
         self._base_url = base_url
+        self._auth_header = auth_header
         self._client: httpx.AsyncClient | None = None
         self._last_request_time: float = 0
         self._min_interval: float = 1.0
@@ -40,7 +47,10 @@ class DataSource(ABC):
         if self._client is None or self._client.is_closed:
             headers = {"Accept": "application/json"}
             if self._api_key:
-                headers["Authorization"] = f"Bearer {self._api_key}"
+                if self._auth_header:
+                    headers[self._auth_header] = self._api_key
+                else:
+                    headers["Authorization"] = f"Bearer {self._api_key}"
             self._client = httpx.AsyncClient(
                 timeout=30.0, headers=headers, follow_redirects=True
             )
@@ -124,6 +134,134 @@ class DuneAnalytics(DataSource):
     def to_dict(self) -> dict[str, Any]:
         d = super().to_dict()
         d["query_ids"] = self._query_ids
+        return d
+
+
+class NansenQuery(DataSource):
+    """Structured on-chain intelligence from the Nansen Query API.
+
+    Authentication uses the ``X-API-Key`` header (not Bearer). The source is
+    inert until a real ``api_key`` is configured, so tests and CI can run
+    without credentials.
+    """
+
+    def __init__(
+        self,
+        api_key: str = "",
+        base_url: str = "https://api.nansen.ai",
+        chain: str = "ethereum",
+        window_days: int = 7,
+        page_size: int = 100,
+        category: str = "on_chain",
+    ) -> None:
+        super().__init__(
+            name="nansen",
+            api_key=api_key,
+            base_url=base_url,
+            auth_header="X-API-Key",
+        )
+        self._chain = chain
+        self._window_days = window_days
+        self._page_size = page_size
+        self._category = category
+        self._min_interval = 1.5
+
+    async def _fetch_token_activity(
+        self, address: str, chain: str, days: int
+    ) -> dict[str, Any] | None:
+        """Query recent transfers for a token/wallet address."""
+        if not self._api_key:
+            return None
+        try:
+            resp = await self._rate_limited_get(
+                f"{self._base_url}/v0/{chain}/transactions/{address}",
+                params={"page_size": self._page_size},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if not isinstance(data, dict):
+                return None
+            if "items" not in data and "transfers" not in data:
+                logger.debug(f"Nansen activity response for {address} unexpected shape")
+            return data
+        except Exception as e:
+            logger.warning(f"Nansen query for {address} failed: {e}")
+            return None
+
+    async def fetch_signals(
+        self, market_id: str | None = None, **kwargs: Any
+    ) -> list[SourceSignal]:
+        signals = []
+        if not self._api_key:
+            logger.debug("Nansen API key not configured, skipping")
+            return signals
+
+        addresses = kwargs.get("token_addresses") or kwargs.get("addresses") or []
+        if not addresses:
+            return signals
+
+        chain = str(kwargs.get("chain", self._chain))
+        days = int(kwargs.get("window_days", self._window_days))
+
+        for address in addresses:
+            data = await self._fetch_token_activity(address, chain, days)
+            signal = self._activity_to_signal(address, data)
+            if signal is not None:
+                signals.append(signal)
+        return signals
+
+    def _activity_to_signal(
+        self, address: str, data: dict[str, Any] | None
+    ) -> SourceSignal | None:
+        if not data:
+            return None
+
+        transfers = data.get("items") or data.get("transfers")
+        if isinstance(transfers, dict):
+            transfers = transfers.get("items", [])
+        if not isinstance(transfers, list):
+            return None
+
+        received_value = 0.0
+        sent_value = 0.0
+        tx_count = 0
+        for tx in transfers:
+            if not isinstance(tx, dict):
+                continue
+            tx_count += 1
+            direction = str(tx.get("tx_type") or tx.get("direction") or "").lower()
+            value = float(tx.get("value") or tx.get("amount") or 0.0)
+            if "received" in direction or "in" in direction:
+                received_value += value
+            elif "sent" in direction or "out" in direction:
+                sent_value += value
+
+        total = received_value + sent_value
+        if total <= 0:
+            return None
+
+        net_flow = (received_value - sent_value) / total
+        confidence = min(1.0, 0.3 + (tx_count / 50.0))
+
+        return SourceSignal(
+            value=max(-1.0, min(1.0, net_flow)),
+            confidence=confidence,
+            source_name="nansen",
+            category=self._category,
+            metadata={
+                "address": address,
+                "chain": self._chain,
+                "received_value": round(received_value, 6),
+                "sent_value": round(sent_value, 6),
+                "transactions": tx_count,
+                "window_days": self._window_days,
+            },
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        d = super().to_dict()
+        d["chain"] = self._chain
+        d["window_days"] = self._window_days
         return d
 
 

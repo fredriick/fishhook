@@ -13,7 +13,12 @@ from fishhook.config.settings import PipelineConfig
 from fishhook.ingestion.credibility import CredibilityScorer
 from fishhook.ingestion.deduplicator import SignalDeduplicator
 from fishhook.ingestion.engine import ScrapingEngine
-from fishhook.ingestion.sources import DuneAnalytics, OrderBookSignalSource, SignalSourceManager
+from fishhook.ingestion.sources import (
+    DuneAnalytics,
+    NansenQuery,
+    OrderBookSignalSource,
+    SignalSourceManager,
+)
 from fishhook.market.circuit_breaker import CircuitBreaker
 from fishhook.market.client import PolymarketClient
 from fishhook.market.executor import TradeExecutor
@@ -161,6 +166,19 @@ class PipelineOrchestrator:
                 DuneAnalytics(
                     api_key=dune_config.api_key,
                     query_ids=dune_config.query_ids,
+                )
+            )
+
+        nansen_config = self._config.data_sources.nansen
+        if nansen_config.enabled and nansen_config.api_key:
+            self._source_manager.register(
+                NansenQuery(
+                    api_key=nansen_config.api_key,
+                    base_url=nansen_config.base_url,
+                    chain=nansen_config.chain,
+                    window_days=nansen_config.window_days,
+                    page_size=nansen_config.page_size,
+                    category=nansen_config.category,
                 )
             )
 

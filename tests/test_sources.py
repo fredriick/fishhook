@@ -5,6 +5,7 @@ import pytest
 from fishhook.ingestion.sources import (
     DataSource,
     DuneAnalytics,
+    NansenQuery,
     SignalSourceManager,
     SourceSignal,
 )
@@ -92,6 +93,68 @@ async def test_dune_fetch_uses_row_signals(monkeypatch) -> None:
 async def test_dune_skipped_without_api_key() -> None:
     dune = DuneAnalytics(api_key="", query_ids=[1])
     assert await dune.fetch_signals() == []
+
+
+# --- Nansen ----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_nansen_skipped_without_api_key() -> None:
+    source = NansenQuery(api_key="")
+    assert await source.fetch_signals(token_addresses=["0xabc"]) == []
+
+
+@pytest.mark.asyncio
+async def test_nansen_inert_without_addresses() -> None:
+    source = NansenQuery(api_key="key")
+    assert await source.fetch_signals(market_id="m1") == []
+
+
+@pytest.mark.asyncio
+async def test_nansen_fetch_uses_activity_rows(monkeypatch) -> None:
+    source = NansenQuery(api_key="key")
+
+    async def fake_fetch(address: str, chain: str, days: int) -> dict:
+        return {
+            "items": [
+                {"tx_type": "received", "value": 900.0},
+                {"tx_type": "sent", "value": 100.0},
+                {"tx_type": "sent", "value": 100.0},
+            ]
+        }
+
+    monkeypatch.setattr(source, "_fetch_token_activity", fake_fetch)
+    signals = await source.fetch_signals(token_addresses=["0xabc"])
+
+    assert len(signals) == 1
+    assert signals[0].source_name == "nansen"
+    assert signals[0].category == "on_chain"
+    assert 0.0 < signals[0].value < 1.0
+    assert signals[0].metadata["transactions"] == 3
+    assert signals[0].metadata["received_value"] == 900.0
+    assert signals[0].metadata["address"] == "0xabc"
+
+
+@pytest.mark.asyncio
+async def test_nansen_signal_none_for_empty_activity(monkeypatch) -> None:
+    source = NansenQuery(api_key="key")
+
+    async def empty_fetch(address: str, chain: str, days: int) -> dict:
+        return {"items": []}
+
+    monkeypatch.setattr(source, "_fetch_token_activity", empty_fetch)
+    assert await source.fetch_signals(token_addresses=["0xabc"]) == []
+
+
+@pytest.mark.asyncio
+async def test_nansen_uses_x_api_key_header() -> None:
+    source = NansenQuery(api_key="kys", base_url="https://example.test")
+
+    client = await source._get_client()
+
+    assert client.headers["X-API-Key"] == "kys"
+    assert "Authorization" not in client.headers
+    await source.close()
 
 
 @pytest.mark.asyncio
