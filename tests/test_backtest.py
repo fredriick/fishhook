@@ -105,6 +105,16 @@ def test_metrics_empty_result() -> None:
     assert metrics.trades_by_category == {}
     assert metrics.accuracy_by_category == {}
     assert metrics.pnl_by_category == {}
+    assert metrics.total_markets == 0
+
+
+def test_metrics_total_markets_reflects_analyzed_not_traded() -> None:
+    metrics = BacktestMetrics.compute([], total_markets=3)
+    assert metrics.total_markets == 3
+
+    trades = [_trade(10.0, "crypto")]
+    metrics = BacktestMetrics.compute(trades, total_markets=5)
+    assert metrics.total_markets == 5
 
 
 # --- engine -----------------------------------------------------------------

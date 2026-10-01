@@ -226,7 +226,7 @@ class BacktestEngine:
                 )
             )
 
-        metrics = BacktestMetrics.compute(trades)
+        metrics = BacktestMetrics.compute(trades, total_markets=len(records))
 
         logger.info(
             f"Backtest complete ({mode}): {len(trades)} trades from "
@@ -280,7 +280,8 @@ class BacktestEngine:
                     data_weight=self._strategy_config.data_weight,
                 )
 
-                trades = []
+                trades: list[BacktestTrade] = []
+                signals_generated = 0
                 agreement_correct = 0
                 agreement_total = 0
                 category_agreement: dict[str, list[int]] = {}
@@ -291,6 +292,7 @@ class BacktestEngine:
                     if one_day_change == 0:
                         continue
 
+                    signals_generated += 1
                     swarm = SimulationWorld(swarm_config)
                     swarm._config.num_agents = agents
                     swarm._config.max_rounds = 30
@@ -375,9 +377,11 @@ class BacktestEngine:
 
                 result = BacktestResult(
                     trades=trades,
-                    metrics=BacktestMetrics.compute(trades),
+                    metrics=BacktestMetrics.compute(
+                        trades, total_markets=len(records)
+                    ),
                     markets_tested=len(records),
-                    signals_generated=len(records),
+                    signals_generated=signals_generated,
                     config_used={
                         "agents": agents,
                         "threshold": threshold,

@@ -69,10 +69,12 @@ class BacktestMetrics:
         }
 
     @staticmethod
-    def compute(trades: list[Any]) -> BacktestMetrics:
+    def compute(
+        trades: list[Any], total_markets: int | None = None
+    ) -> BacktestMetrics:
         if not trades:
             return BacktestMetrics(
-                total_markets=0,
+                total_markets=total_markets if total_markets is not None else 0,
                 total_trades=0,
                 wins=0,
                 losses=0,
@@ -175,8 +177,12 @@ class BacktestMetrics:
 
         pnl_by_category = dict(category_pnl)
 
+        # Markets analyzed, not just markets that produced an executed trade
+        if total_markets is None:
+            total_markets = len(set(t.market_id for t in trades))
+
         return BacktestMetrics(
-            total_markets=len(set(t.market_id for t in trades)),
+            total_markets=total_markets,
             total_trades=total,
             wins=wins,
             losses=losses,
