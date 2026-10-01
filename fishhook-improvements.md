@@ -4,15 +4,15 @@ A prioritized list of updates across every layer of the pipeline. No code — ju
 
 > ## Status
 >
-> Most of this roadmap is now implemented. Remaining work: **Nansen structured source**,
-> **config versioning**, and the **agent heterogeneity expansion** (information-access variance,
-> staggered update frequency, memory decay).
+> Most of this roadmap is now implemented. Remaining work: **Nansen structured source**
+> and the **agent heterogeneity expansion** (information-access variance, staggered
+> update frequency, memory decay).
 >
 > | Shipped | Remaining |
 > |---|---|
 > | Backtester — resolved-outcome mode, category breakdown | Nansen connector |
-> | Circuit breaker incl. `halt` / `resume` | Config versioning |
-> | Kelly criterion position sizer | Agent heterogeneity expansion |
+> | Circuit breaker incl. `halt` / `resume` | Agent heterogeneity expansion |
+> | Kelly criterion position sizer | — |
 > | Signal deduplicator (incl. implied-price signal dedup) | — |
 > | Source credibility scorer | — |
 > | Paper trading mode (real mainnet prices, no orders) | — |
@@ -20,6 +20,7 @@ A prioritized list of updates across every layer of the pipeline. No code — ju
 > | Portfolio heat limits | — |
 > | Slippage model | — |
 > | Learned weights per market category | — |
+> | Config versioning (fingerprints + snapshots) | — |
 > | Structured logging with correlation IDs | — |
 > | Alerting (circuit breaker, drawdown, auth, anomalies) | — |
 > | Signal staleness TTL | — |
@@ -148,7 +149,7 @@ Add alerting (Telegram bot, email, or webhook) for:
 - Simulation runs producing anomalous results (e.g. consensus > 0.99, which usually means a bug)
 
 ### Config Versioning
-> **Status: Open** — the active config is not yet versioned or tied to a trading session ID.
+> **Status: Implemented** — `PipelineConfig.fingerprint()` derives a deterministic sha256 of the effective config with secrets redacted; the orchestrator persists a redacted snapshot per version to `data/config_snapshots/<version>.json` and stamps each `PipelineRun` with its `config_version`. `fishhook config` prints the version and snapshot.
 Track which config was active for each trading session. Parameter changes should be versioned so backtesting can reproduce the exact configuration used during any historical period.
 
 ### Market Category Tagging
