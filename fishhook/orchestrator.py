@@ -387,6 +387,7 @@ class PipelineOrchestrator:
             "consensus": result.final_consensus.to_dict(),
             "swarm_signal": swarm.get_swarm_signal(),
             "social_network": result.social_network_stats,
+            "heterogeneity": result.heterogeneity_stats,
             "elapsed": round(result.elapsed_seconds, 2),
         }
 

@@ -4,14 +4,12 @@ A prioritized list of updates across every layer of the pipeline. No code — ju
 
 > ## Status
 >
-> Most of this roadmap is now implemented. Remaining work: **Nansen structured source**
-> and the **agent heterogeneity expansion** (information-access variance, staggered
-> update frequency, memory decay).
+> Most of this roadmap is now implemented. Remaining work: the **Nansen structured source**.
 >
 > | Shipped | Remaining |
 > |---|---|
 > | Backtester — resolved-outcome mode, category breakdown | Nansen connector |
-> | Circuit breaker incl. `halt` / `resume` | Agent heterogeneity expansion |
+> | Circuit breaker incl. `halt` / `resume` | — |
 > | Kelly criterion position sizer | — |
 > | Signal deduplicator (incl. implied-price signal dedup) | — |
 > | Source credibility scorer | — |
@@ -21,6 +19,7 @@ A prioritized list of updates across every layer of the pipeline. No code — ju
 > | Slippage model | — |
 > | Learned weights per market category | — |
 > | Config versioning (fingerprints + snapshots) | — |
+> | Agent heterogeneity (info access, update frequency, memory) | — |
 > | Structured logging with correlation IDs | — |
 > | Alerting (circuit breaker, drawdown, auth, anomalies) | — |
 > | Signal staleness TTL | — |
@@ -70,7 +69,7 @@ This is the most important addition to the entire project. Replay historical Pol
 Without a backtester, you have no idea if your system has genuine edge or if you're just lucky. All parameter tuning (`divergence_threshold`, `min_confidence`, `simulation_weight`) should flow from backtesting results, not intuition.
 
 ### Agent Heterogeneity Expansion
-> **Status: Partial — agents vary by personality only.** Information-access variance, staggered update frequency, and memory decay are still to be built.
+> **Status: Implemented** — agents vary by personality plus **information access** (each agent perceives incoming signals with its own probability), **update frequency** (slow agents skip rounds before re-evaluating, fast agents flip quickly), and **memory capacity** (per-agent observation horizon). Configured via `swarm.heterogeneity`; stats surface in `fishhook simulate` output.
 Current agents vary by personality. Also vary them by:
 - **Information access** — some agents see all signals, some see only one source category
 - **Update frequency** — some agents are slow to change their views, some flip quickly

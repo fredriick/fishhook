@@ -8,8 +8,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
+
 from fishhook.config.settings import SwarmConfig
-from fishhook.swarm.agent import Agent, AgentPersonality
+from fishhook.swarm.agent import Agent, AgentHeterogeneity, AgentMemory, AgentPersonality
 from fishhook.swarm.consensus import ConsensusState, ConsensusTracker
 from fishhook.swarm.social import SocialNetwork
 from fishhook.utils.logging import get_logger
@@ -28,6 +30,7 @@ class SimulationResult:
     converged: bool
     regime_changes: int
     final_distribution: dict[str, int]
+    heterogeneity_stats: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +38,7 @@ class SimulationResult:
             "final_consensus": self.final_consensus.to_dict(),
             "agent_count": self.agent_count,
             "social_network": self.social_network_stats,
+            "heterogeneity": self.heterogeneity_stats,
             "elapsed_seconds": round(self.elapsed_seconds, 2),
             "converged": self.converged,
             "regime_changes": self.regime_changes,
@@ -79,6 +83,8 @@ class SimulationWorld:
         )
         self._agents = [Agent(base_personality.mutate(rate=0.2)) for _ in range(n)]
 
+        self._assign_heterogeneity()
+
         self._social_network.build_from_agents(self._agents)
 
         communities = self._social_network.detect_communities()
@@ -93,8 +99,65 @@ class SimulationWorld:
             f"Swarm initialized: {n} agents, groups: {max(communities.values()) + 1 if communities else 0}"
         )
 
-    def inject_information(self, signal: float, source: str = "market_data") -> None:
+    def _assign_heterogeneity(self) -> None:
+        """Vary information access, update cadence and memory horizon."""
+
+        cfg = self._config.heterogeneity
+        if not cfg.enabled:
+            return
+
         for agent in self._agents:
+            info_access = random.uniform(cfg.info_access_min, 1.0)
+            skew = random.random() ** cfg.update_frequency_power
+            update_frequency = 1 + int(
+                skew * (cfg.max_update_frequency - 1)
+            )
+            memory_capacity = random.randint(20, cfg.memory_capacity_max)
+            agent.heterogeneity = AgentHeterogeneity(
+                info_access=info_access,
+                update_frequency=update_frequency,
+                memory_capacity=memory_capacity,
+            )
+            agent.memory = AgentMemory(max_entries=memory_capacity)
+
+    def get_heterogeneity_stats(self) -> dict[str, Any]:
+        if not self._agents:
+            return {"enabled": False}
+        traits = [a.heterogeneity for a in self._agents if a.heterogeneity]
+        access = [t.info_access for t in traits]
+        freqs = [t.update_frequency for t in traits]
+        caps = [t.memory_capacity for t in traits]
+
+        return {
+            "enabled": bool(traits),
+            "agents_with_traits": len(traits),
+            "mean_info_access": round(float(np.mean(access)), 3) if access else 1.0,
+            "info_access_min": round(min(access), 3) if access else 1.0,
+            "info_access_max": round(max(access), 3) if access else 1.0,
+            "update_frequency": {
+                str(f): freqs.count(f) for f in sorted(set(freqs))
+            },
+            "mean_memory_capacity": (
+                round(float(np.mean(caps)), 1) if caps else 100.0
+            ),
+        }
+
+    def inject_information(
+        self,
+        signal: float,
+        source: str = "market_data",
+        perception: dict[int, bool] | None = None,
+    ) -> None:
+        """Feed a signal into the swarm; agents perceive it by their own
+        ``info_access`` probability."""
+        for agent in self._agents:
+            perceived = True
+            if agent.heterogeneity is not None:
+                perceived = random.random() < agent.heterogeneity.info_access
+            if perception is not None:
+                perception[agent.id] = perceived
+            if not perceived:
+                continue
             noise = (1 - agent.personality.information_weight) * 0.2
             perceived_signal = signal + (random.gauss(0, 1) * noise if noise > 0 else 0)
             agent.observe_information(perceived_signal, source=source)
@@ -102,14 +165,24 @@ class SimulationWorld:
     def run_round(self, external_signal: float | None = None) -> ConsensusState:
         self._round += 1
 
+        perception: dict[int, bool] = {}
         if external_signal is not None:
-            self.inject_information(external_signal)
+            self.inject_information(external_signal, perception=perception)
 
         for agent in self._agents:
+            agent.tick()
+
+            signal = external_signal
+            if external_signal is not None and not perception.get(agent.id, True):
+                signal = None
+
+            if not agent.should_update_this_round():
+                continue
+
             neighbor_opinions = self._social_network.get_neighbor_opinions(agent.id)
             agent.update_opinion(
                 neighbor_opinions,
-                external_signal=external_signal,
+                external_signal=signal,
                 noise_factor=self._config.noise_factor,
             )
 
@@ -177,6 +250,7 @@ class SimulationWorld:
             converged=self._consensus.consensus_reached,
             regime_changes=self._regime_changes,
             final_distribution=final.distribution,
+            heterogeneity_stats=self.get_heterogeneity_stats(),
         )
 
     def get_swarm_signal(self) -> dict[str, Any]:

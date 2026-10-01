@@ -38,11 +38,22 @@ class AgentPersonalityConfig(BaseModel):
     conviction_strength: float = Field(0.5, ge=0.0, le=1.0)
 
 
+class AgentHeterogeneityConfig(BaseModel):
+    enabled: bool = True
+    info_access_min: float = Field(0.4, ge=0.0, le=1.0)
+    memory_capacity_max: int = Field(200, ge=20)
+    max_update_frequency: int = Field(4, ge=1)
+    update_frequency_power: float = Field(2.0, ge=0.1)
+
+
 class SwarmConfig(BaseModel):
     num_agents: int = 1000
     max_rounds: int = 50
     consensus_threshold: float = 0.8
     personality: AgentPersonalityConfig = Field(default_factory=AgentPersonalityConfig)
+    heterogeneity: AgentHeterogeneityConfig = Field(
+        default_factory=AgentHeterogeneityConfig
+    )
     social_connection_probability: float = 0.01
     opinion_update_rate: float = 0.1
     noise_factor: float = 0.05

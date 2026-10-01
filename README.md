@@ -90,7 +90,14 @@ fishhook simulate --agents 1000 --rounds 50 --signal 0.3
 | `--rounds`, `-r` | 50 | Max simulation rounds |
 | `--signal`, `-s` | 0.0 | External signal to inject (-1.0 to 1.0) |
 
-**Output**: JSON with consensus state, distribution, social network stats, convergence status.
+**Output**: JSON with consensus state, distribution, social network stats, convergence status, and agent heterogeneity stats.
+
+Agents are heterogeneous by default (Swarm config's `heterogeneity` block): each
+agent has its own **information access** (fraction of incoming signals it perceives),
+**update frequency** (rounds between opinion updates), and **memory capacity** (how
+far back it retains observations), so the swarm mixes fast, well-informed agents with
+slow, partially-informed ones — closer to how real crowds form opinions. Set
+`heterogeneity.enabled: false` for the homogeneous swarm.
 
 ### `fishhook scrape`
 Scrape URLs using Playwright with request interception.

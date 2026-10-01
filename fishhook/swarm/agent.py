@@ -54,6 +54,22 @@ class AgentPersonality:
 
 
 @dataclass
+class AgentHeterogeneity:
+    """Per-agent traits that vary how signals reach and change an agent.
+
+    - ``info_access``: probability that a given incoming signal is actually
+      perceived by this agent. Low-access agents see a fraction of the data.
+    - ``update_frequency``: how many rounds this agent waits between updating
+      its opinion. Slow agents react slowly; fast agents flip quickly.
+    - ``memory_capacity``: how many past observations the agent retains.
+    """
+
+    info_access: float = 1.0
+    update_frequency: int = 1
+    memory_capacity: int = 100
+
+
+@dataclass
 class MemoryEntry:
     content: dict[str, Any]
     timestamp: datetime
@@ -102,6 +118,10 @@ class AgentMemory:
         return float(np.average(signals, weights=weights))
 
     @property
+    def capacity(self) -> int:
+        return self._max
+
+    @property
     def count(self) -> int:
         return len(self._entries)
 
@@ -113,11 +133,20 @@ class Agent:
     def reset_id_counter(cls) -> None:
         cls._next_id = 0
 
-    def __init__(self, personality: AgentPersonality | None = None) -> None:
+    def __init__(
+        self,
+        personality: AgentPersonality | None = None,
+        heterogeneity: AgentHeterogeneity | None = None,
+    ) -> None:
         Agent._next_id += 1
         self.id = Agent._next_id
         self.personality = personality or AgentPersonality.random()
-        self.memory = AgentMemory()
+        self.heterogeneity = heterogeneity
+        self.memory = AgentMemory(
+            max_entries=(
+                heterogeneity.memory_capacity if heterogeneity else 100
+            )
+        )
         self.opinion: float = random.uniform(-1.0, 1.0)
         self.confidence: float = random.uniform(0.1, 0.5)
         self.group_id: int | None = None
@@ -126,6 +155,16 @@ class Agent:
         self._prediction_count: int = 0
         self._correct_count: int = 0
         self._bayesian_receptiveness: float = 1.0
+        self._rounds_seen: int = 0
+
+    def tick(self) -> None:
+        """Advance the agent's round counter (drives update frequency)."""
+        self._rounds_seen += 1
+
+    def should_update_this_round(self) -> bool:
+        if self.heterogeneity is None or self.heterogeneity.update_frequency <= 1:
+            return True
+        return self._rounds_seen % self.heterogeneity.update_frequency == 0
 
     @property
     def social_connections(self) -> list[int]:
@@ -243,6 +282,19 @@ class Agent:
             "bayesian_receptiveness": round(self._bayesian_receptiveness, 3),
             "prediction_accuracy": round(self.prediction_accuracy, 3),
             "predictions": self._prediction_count,
+            "heterogeneity": {
+                "info_access": (
+                    round(self.heterogeneity.info_access, 3)
+                    if self.heterogeneity
+                    else 1.0
+                ),
+                "update_frequency": (
+                    self.heterogeneity.update_frequency
+                    if self.heterogeneity
+                    else 1
+                ),
+                "memory_capacity": self.memory.capacity,
+            },
             "personality": {
                 "risk_tolerance": self.personality.risk_tolerance,
                 "conformity_bias": self.personality.conformity_bias,
