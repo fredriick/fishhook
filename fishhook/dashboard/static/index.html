@@ -52,6 +52,9 @@
   }
   button:hover { opacity:0.85; }
   button.secondary { background:var(--border); color:var(--text); }
+  button.danger { background:var(--red); color:#fff; }
+  button.danger:hover { background:#f85149; }
+  .pretty { font-size:11px; color:var(--dim); background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:8px; max-height:180px; overflow:auto; white-space:pre-wrap; }
   table { width:100%; border-collapse:collapse; font-size:12px; }
   th { text-align:left; color:var(--dim); font-weight:normal; padding:6px 8px; border-bottom:1px solid var(--border); }
   td { padding:6px 8px; border-bottom:1px solid var(--border); }
@@ -111,6 +114,53 @@
       <button class="secondary" onclick="refreshAll()">Refresh</button>
     </div>
     <div id="simResult" style="font-size:12px; color:var(--dim);">Ready</div>
+  </div>
+
+  <!-- Pipeline Actions -->
+  <div class="card">
+    <h2>Pipeline Actions</h2>
+    <div class="params">
+      <label>Markets <input type="number" id="pMarkets" value="10" min="1"></label>
+      <label>Category <input type="text" id="pCategory" placeholder="crypto"></label>
+    </div>
+    <div class="btn-row">
+      <button onclick="runPipeline()">Run Pipeline</button>
+      <button class="danger" onclick="haltTrading()">Halt</button>
+      <button class="secondary" onclick="resumeTrading()">Resume</button>
+    </div>
+    <label style="font-size:12px; color:var(--dim);">URLs (space-separated)
+      <input type="text" id="pUrls" style="width:100%; margin-top:4px;" placeholder="https://example.com https://polymarket.com">
+    </label>
+    <div class="btn-row" style="margin-top:8px;">
+      <button class="secondary" onclick="scrapeUrls()">Scrape URLs</button>
+    </div>
+    <div id="actionResult" style="font-size:12px; color:var(--dim); margin-top:8px;">Ready</div>
+  </div>
+
+  <!-- Backtest -->
+  <div class="card">
+    <h2>Backtest</h2>
+    <div class="params">
+      <label>Markets <input type="number" id="bMarkets" value="20" min="1"></label>
+      <label>Agents <input type="number" id="bAgents" value="300"></label>
+      <label>Rounds <input type="number" id="bRounds" value="20"></label>
+      <label><input type="checkbox" id="bLive"> Live</label>
+    </div>
+    <div class="btn-row">
+      <button onclick="runBacktest()">Run Backtest</button>
+    </div>
+    <pre class="pretty" id="backtestResult">Ready</pre>
+  </div>
+
+  <!-- Config -->
+  <div class="card">
+    <h2>Active Config</h2>
+    <div class="stat-row">
+      <div class="stat"><div class="val" id="cfgTag" style="font-size:16px;">--</div><div class="label">Version Tag</div></div>
+      <div class="stat"><div class="val" id="cfgBreaker" style="font-size:16px;">--</div><div class="label">Circuit Breaker</div></div>
+    </div>
+    <div id="cfgSources" style="font-size:11px; color:var(--dim); margin-bottom:8px;">Data sources: --</div>
+    <pre class="pretty" id="cfgSnapshot">--</pre>
   </div>
 
   <!-- Opinion History Chart -->
@@ -178,6 +228,20 @@ function log(msg) {
 async function api(path) {
   try {
     const r = await fetch(API + path);
+    return await r.json();
+  } catch (e) {
+    log(`API error: ${e.message}`);
+    return null;
+  }
+}
+
+async function apiPost(path, body) {
+  try {
+    const r = await fetch(API + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
     return await r.json();
   } catch (e) {
     log(`API error: ${e.message}`);
@@ -315,11 +379,12 @@ function updateNetwork(data) {
 }
 
 async function refreshAll() {
-  const [status, sim, trades, network] = await Promise.all([
+  const [status, sim, trades, network, config] = await Promise.all([
     api('/api/status'),
     api('/api/simulation'),
     api('/api/trades'),
     api('/api/network'),
+    api('/api/config'),
   ]);
 
   if (status) {
@@ -330,6 +395,7 @@ async function refreshAll() {
   if (sim && sim.consensus) updateConsensus(sim.consensus);
   if (trades) updatePortfolio(trades);
   if (network) updateNetwork(network);
+  updateConfig(status, config);
 
   document.getElementById('connStatus').textContent = 'LIVE';
   document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
@@ -350,6 +416,93 @@ async function runSimulation() {
     log(`Simulation complete: ${result.consensus?.direction} in ${result.total_rounds || result.consensus?.round} rounds`);
   } else {
     document.getElementById('simResult').textContent = 'Failed';
+  }
+}
+
+async function runPipeline() {
+  const markets = parseInt(document.getElementById('pMarkets').value || '10', 10);
+  const category = document.getElementById('pCategory').value.trim() || null;
+  const el = document.getElementById('actionResult');
+  el.textContent = 'Running pipeline...';
+  log(`Running pipeline: markets=${markets}, category=${category || 'all'}`);
+  const result = await apiPost('/api/run', { markets, category });
+  if (result) {
+    el.textContent = `Run #${result.run_id}: markets=${result.markets_analyzed}, signals=${result.signals_generated}, trades=${result.trades_executed}, errors=${(result.errors || []).length}`;
+    log(`Pipeline run complete: ${result.markets_analyzed} markets, ${result.trades_executed} trades`);
+    refreshAll();
+  } else {
+    el.textContent = 'Failed';
+  }
+}
+
+async function scrapeUrls() {
+  const raw = document.getElementById('pUrls').value.trim();
+  const urls = raw.split(/\s+/).filter(Boolean);
+  const el = document.getElementById('actionResult');
+  if (!urls.length) { el.textContent = 'Enter at least one URL'; return; }
+  el.textContent = 'Scraping...';
+  log(`Scraping ${urls.length} URL(s)`);
+  const result = await apiPost('/api/scrape', { urls });
+  if (result) {
+    const n = Object.keys(result.results || {}).length;
+    el.textContent = `Scraped ${n}/${urls.length} URLs; cached=${Object.keys(result.results || {}).join(', ')}`;
+    log(`Scrape complete: ${n}/${urls.length} URLs`);
+    refreshAll();
+  } else {
+    el.textContent = 'Failed';
+  }
+}
+
+async function haltTrading() {
+  const result = await apiPost('/api/halt', { reason: 'Manual halt (dashboard)' });
+  const el = document.getElementById('actionResult');
+  el.textContent = result && !result.error ? `Halted: ${result.state || 'OPEN'}` : (result?.error || 'Failed');
+  log(`Halt requested: ${el.textContent}`);
+  refreshAll();
+}
+
+async function resumeTrading() {
+  const result = await apiPost('/api/resume', {});
+  const el = document.getElementById('actionResult');
+  el.textContent = result && !result.error ? `Resumed: ${result.state || 'CLOSED'}` : (result?.error || 'Failed');
+  log(`Resume requested: ${el.textContent}`);
+  refreshAll();
+}
+
+async function runBacktest() {
+  const markets = document.getElementById('bMarkets').value;
+  const agents = document.getElementById('bAgents').value;
+  const rounds = document.getElementById('bRounds').value;
+  const live = document.getElementById('bLive').checked ? '1' : '0';
+  const el = document.getElementById('backtestResult');
+  el.textContent = 'Running backtest...';
+  log(`Running backtest: ${markets} markets, ${agents} agents, live=${live}`);
+  const result = await api(`/api/backtest?markets=${markets}&agents=${agents}&rounds=${rounds}&live=${live}`);
+  if (result) {
+    el.textContent = JSON.stringify(result, null, 2);
+    log(`Backtest complete: raw_accuracy=${result.raw_accuracy}`);
+  } else {
+    el.textContent = 'Failed';
+  }
+}
+
+function updateConfig(status, config) {
+  if (config) {
+    document.getElementById('cfgTag').textContent = config.config_tag || '--';
+    document.getElementById('cfgSnapshot').textContent = JSON.stringify(config.config, null, 2);
+  }
+  if (status) {
+    const cb = status.circuit_breaker;
+    const el = document.getElementById('cfgBreaker');
+    if (cb) {
+      const open = (cb.state || '').toLowerCase().includes('open');
+      el.textContent = (cb.state || '--').toUpperCase();
+      el.className = 'val ' + (open ? 'bearish' : 'bullish');
+    } else {
+      el.textContent = 'DISABLED';
+    }
+    const sources = status.data_sources || {};
+    document.getElementById('cfgSources').textContent = 'Data sources: ' + (Object.keys(sources).join(', ') || 'none');
   }
 }
 

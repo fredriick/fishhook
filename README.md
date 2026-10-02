@@ -210,6 +210,9 @@ Open `http://127.0.0.1:8787` after running `fishhook dashboard`.
 | **Consensus History** | Line chart tracking mean opinion and agreement over simulation runs |
 | **Distribution Chart** | Bar chart of current agent opinion distribution |
 | **Simulation Controls** | Run live simulations with configurable agents, rounds, signal |
+| **Pipeline Actions** | Run the full pipeline, scrape URLs, halt/resume trading via the circuit breaker |
+| **Backtest** | Backtest the swarm against resolved (or live) markets with configurable params |
+| **Active Config** | Config version + tag, redacted snapshot, circuit-breaker state, registered data sources |
 | **Portfolio** | Positions, total value, P&L, winning/losing counts |
 | **Recent Runs** | Table of pipeline run results (markets, signals, trades, time) |
 | **Social Network** | Agent count, connections, groups, top influencers by centrality |
@@ -219,16 +222,25 @@ Open `http://127.0.0.1:8787` after running `fishhook dashboard`.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/status` | GET | Full pipeline state (running, trades, strategy, cached data) |
+| `/api/status` | GET | Full pipeline state (running, trades, strategy, cached data, sources) |
+| `/api/config` | GET | Active config version, tag, snapshot path, and redacted snapshot |
 | `/api/simulation` | GET | Current swarm consensus and signal |
 | `/api/simulation/run` | GET | Trigger a simulation. Query params: `agents`, `rounds`, `signal` |
 | `/api/trades` | GET | Trade history and portfolio summary |
 | `/api/network` | GET | Social network stats, influencers, community sizes |
 | `/api/history` | GET | History of simulation results |
+| `/api/backtest` | GET | Run a backtest. Params: `markets`, `agents`, `rounds`, `min_volume`, `category`, `live`, `sweep` |
+| `/api/run` | POST | Run the full pipeline once. Body: `{"markets": 10, "category": "crypto"}` |
+| `/api/scrape` | POST | Scrape URLs. Body: `{"urls": ["https://...", ...]}` |
+| `/api/halt` | POST | Force-open the circuit breaker (halt trading). Body: `{"reason": "..."}` |
+| `/api/resume` | POST | Reset the circuit breaker. Body: `{}` |
 
-**Example**:
+**Examples**:
 ```
-GET http://127.0.0.1:8787/api/simulation/run?agents=500&rounds=30&signal=0.3
+GET  http://127.0.0.1:8787/api/simulation/run?agents=500&rounds=30&signal=0.3
+GET  http://127.0.0.1:8787/api/backtest?markets=50&agents=500&live=1
+POST http://127.0.0.1:8787/api/run                      {"markets": 10}
+POST http://127.0.0.1:8787/api/halt                     {"reason": "reviewing"}
 ```
 
 ## Configuration
@@ -375,7 +387,7 @@ For each market:
 
 ### 5. Dashboard
 
-**Web Dashboard** (`fishhook dashboard`): aiohttp server serving a single-page app with Chart.js charts. Auto-refreshes every 5 seconds. Supports triggering live simulations from the UI.
+**Web Dashboard** (`fishhook dashboard`): aiohttp server serving a single-page app with Chart.js charts. Auto-refreshes every 5 seconds. Supports triggering live simulations, full pipeline runs, URL scraping, backtests, and circuit-breaker halt/resume from the UI — the same operations as the CLI.
 
 **Terminal Dashboard** (`fishhook tui`): Rich-based live-updating terminal UI with split panes showing swarm consensus, opinion distribution, runs, and portfolio.
 

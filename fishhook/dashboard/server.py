@@ -32,15 +32,7 @@ class DashboardServer:
     async def start(self) -> None:
         from aiohttp import web
 
-        app = web.Application()
-        app.router.add_get("/", self._handle_index)
-        app.router.add_get("/api/status", self._handle_status)
-        app.router.add_get("/api/simulation", self._handle_simulation)
-        app.router.add_get("/api/simulation/run", self._handle_run_simulation)
-        app.router.add_get("/api/trades", self._handle_trades)
-        app.router.add_get("/api/network", self._handle_network)
-        app.router.add_get("/api/history", self._handle_history)
-        app.router.add_get("/api/backtest", self._handle_backtest)
+        app = self._build_app()
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -52,6 +44,36 @@ class DashboardServer:
     async def stop(self) -> None:
         if self._server:
             await self._server.cleanup()
+
+    def _build_app(self) -> Any:
+        from aiohttp import web
+
+        app = web.Application()
+        # Read-only views
+        app.router.add_get("/", self._handle_index)
+        app.router.add_get("/api/status", self._handle_status)
+        app.router.add_get("/api/config", self._handle_config)
+        app.router.add_get("/api/simulation", self._handle_simulation)
+        app.router.add_get("/api/simulation/run", self._handle_run_simulation)
+        app.router.add_get("/api/trades", self._handle_trades)
+        app.router.add_get("/api/network", self._handle_network)
+        app.router.add_get("/api/history", self._handle_history)
+        app.router.add_get("/api/backtest", self._handle_backtest)
+        # Control actions
+        app.router.add_post("/api/run", self._handle_run)
+        app.router.add_post("/api/scrape", self._handle_scrape)
+        app.router.add_post("/api/halt", self._handle_halt)
+        app.router.add_post("/api/resume", self._handle_resume)
+        return app
+
+    async def _read_json(self, request: Any) -> dict[str, Any]:
+        from aiohttp.web import HTTPBadRequest
+
+        try:
+            data = await request.json()
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            raise HTTPBadRequest(text="Request body must be valid JSON")
 
     async def _handle_index(self, request: Any) -> Any:
         from aiohttp import web
@@ -66,6 +88,23 @@ class DashboardServer:
 
         data = self._orchestrator.get_status()
         return web.json_response(data)
+
+    async def _handle_config(self, request: Any) -> Any:
+        from aiohttp import web
+
+        config = self._orchestrator._config
+        version = config.fingerprint()
+        snapshot_path = config.data_dir / "config_snapshots" / f"{version}.json"
+
+        return web.json_response(
+            {
+                "config_version": version,
+                "config_tag": config.config_tag(),
+                "config_snapshot_path": str(snapshot_path),
+                "config": config.snapshot(),
+            },
+            dumps=json.dumps,
+        )
 
     async def _handle_simulation(self, request: Any) -> Any:
         from aiohttp import web
@@ -147,6 +186,66 @@ class DashboardServer:
 
         return web.json_response({"history": self._simulation_history})
 
+    async def _handle_run(self, request: Any) -> Any:
+        from aiohttp import web
+
+        payload = await self._read_json(request)
+        max_markets = int(payload.get("markets", 10))
+        category = payload.get("category")
+        categories = [category] if category else None
+
+        run = await self._orchestrator.run_once(
+            categories=categories,
+            max_markets=max_markets,
+        )
+        return web.json_response(run.to_dict())
+
+    async def _handle_scrape(self, request: Any) -> Any:
+        from aiohttp import web
+
+        payload = await self._read_json(request)
+        urls = payload.get("urls") or []
+        if not urls or not isinstance(urls, list):
+            return web.json_response(
+                {"error": "Provide a non-empty 'urls' list"}, status=400
+            )
+
+        scraper = self._orchestrator._scraper
+        await scraper.start()
+        try:
+            results = await self._orchestrator.scrape_and_cache(urls)
+        finally:
+            await scraper.stop()
+
+        fresh = {url: results[url] for url in urls if url in results}
+        return web.json_response({"urls": urls, "results": fresh})
+
+    async def _handle_halt(self, request: Any) -> Any:
+        from aiohttp import web
+
+        payload = await self._read_json(request)
+        breaker = self._orchestrator._circuit_breaker
+        if breaker is None:
+            return web.json_response(
+                {"error": "Circuit breaker is not enabled in config"}, status=400
+            )
+
+        reason = payload.get("reason", "Manual halt (dashboard)")
+        breaker.force_open(reason)
+        return web.json_response(breaker.get_status())
+
+    async def _handle_resume(self, request: Any) -> Any:
+        from aiohttp import web
+
+        breaker = self._orchestrator._circuit_breaker
+        if breaker is None:
+            return web.json_response(
+                {"error": "Circuit breaker is not enabled in config"}, status=400
+            )
+
+        breaker.force_close("Manual resume (dashboard)")
+        return web.json_response(breaker.get_status())
+
     async def _handle_backtest(self, request: Any) -> Any:
         from aiohttp import web
 
@@ -157,11 +256,30 @@ class DashboardServer:
         rounds = int(request.query.get("rounds", 20))
         min_volume = float(request.query.get("min_volume", 1000))
         category = request.query.get("category")
+        live = request.query.get("live", "") in ("1", "true", "True")
+        sweep = request.query.get("sweep", "") in ("1", "true", "True")
 
         engine = BacktestEngine(
             swarm_config=self._orchestrator._swarm._config,
             strategy_config=self._orchestrator._strategy._config,
         )
+
+        if sweep:
+            results = await engine.run_sweep(
+                num_markets=markets,
+                min_volume=min_volume,
+                category=category,
+                use_resolved=not live,
+            )
+            return web.json_response(
+                {
+                    key: {
+                        "metrics": result.metrics.to_dict(),
+                        "raw_accuracy": result.raw_accuracy,
+                    }
+                    for key, result in sorted(results.items())
+                }
+            )
 
         result = await engine.run(
             num_markets=markets,
@@ -169,6 +287,7 @@ class DashboardServer:
             category=category,
             agents=agents,
             rounds=rounds,
+            use_resolved=not live,
         )
 
         return web.json_response(result.to_dict())
