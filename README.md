@@ -389,7 +389,7 @@ For each market:
 
 **Web Dashboard** (`fishhook dashboard`): aiohttp server serving a single-page app with Chart.js charts. Auto-refreshes every 5 seconds. Supports triggering live simulations, full pipeline runs, URL scraping, backtests, and circuit-breaker halt/resume from the UI — the same operations as the CLI.
 
-**Terminal Dashboard** (`fishhook tui`): Rich-based live-updating terminal UI with split panes showing swarm consensus, opinion distribution, runs, and portfolio.
+**Terminal Dashboard** (`fishhook tui`): Rich-based live-updating terminal UI with split panes showing swarm consensus, opinion distribution, runs, and portfolio. Interactive parity with the web dashboard — type a command and press Enter: `r [markets]` run the pipeline (`r live` confirms in live mode), `s [sig] [agents] [rounds]` run a simulation, `u <urls>` scrape URLs, `b [markets]` backtest, `h [reason]` halt / `n` resume the circuit breaker, `c` show active config, `?` help, `q` quit.
 
 ## Example Workflows
 
