@@ -132,6 +132,11 @@ class PortfolioHeatConfig(BaseModel):
     max_correlated_positions: int = 5
 
 
+class PortfolioConfig(BaseModel):
+    enabled: bool = True
+    snapshot_every_seconds: int = 60
+
+
 class SlippageConfig(BaseModel):
     enabled: bool = True
     impact_coefficient: float = 0.1
@@ -180,6 +185,7 @@ class PipelineConfig(BaseSettings):
     deduplicator: DeduplicatorConfig = Field(default_factory=DeduplicatorConfig)
     credibility: CredibilityConfig = Field(default_factory=CredibilityConfig)
     portfolio_heat: PortfolioHeatConfig = Field(default_factory=PortfolioHeatConfig)
+    portfolio: PortfolioConfig = Field(default_factory=PortfolioConfig)
     slippage: SlippageConfig = Field(default_factory=SlippageConfig)
     adaptive_weights: AdaptiveWeightsConfig = Field(
         default_factory=AdaptiveWeightsConfig

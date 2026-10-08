@@ -309,12 +309,23 @@ data_sources:
     chain: "ethereum"
     window_days: 7
   orderbook_as_signal: true
+
+portfolio:
+  enabled: true                 # Persist trades/P&L across restarts
+  snapshot_every_seconds: 60    # How often portfolio snapshots are recorded
 ```
 
 If a `data_sources.nansen.api_key` is configured, on-chain net-flow direction for
 the token addresses feeding the strategy is pulled from the Nansen Query API
 (`X-API-Key` auth) and emitted as a `[-1, 1]` smart-money signal. The connector
 is inert without the key.
+
+Portfolio persistence: every executed trade is appended to
+`data_dir/portfolio/trades.jsonl`, periodic portfolio snapshots to
+`snapshots.jsonl`, and realized P&amp;L to `state.json`. On startup the
+orchestrator rehydrates trade history, open positions, and realized P&amp;L from
+the ledger, so P&amp;L and history survive restarts. Disable with
+`portfolio.enabled: false` (env: `MCP_PARSE_PORTFOLIO_ENABLED=false`).
 
 ### Environment Variables
 

@@ -24,6 +24,7 @@ from fishhook.market.client import PolymarketClient
 from fishhook.market.executor import TradeExecutor
 from fishhook.market.models import TradeSignal
 from fishhook.market.slippage import SlippageModel
+from fishhook.portfolio.ledger import PortfolioLedger
 from fishhook.strategy.engine import StrategyEngine
 from fishhook.strategy.portfolio_heat import PortfolioHeatTracker
 from fishhook.strategy.adaptive_weights import AdaptiveWeightLearner
@@ -186,6 +187,11 @@ class PipelineOrchestrator:
             self._orderbook_source = OrderBookSignalSource(self._market_client)
             self._source_manager.register(self._orderbook_source)
 
+        self._ledger = (
+            PortfolioLedger(self._config.data_dir)
+            if self._config.portfolio.enabled
+            else None
+        )
         self._executor = TradeExecutor(
             self._market_client,
             self._config.polymarket,
@@ -193,6 +199,7 @@ class PipelineOrchestrator:
             paper_trading=self._config.polymarket.paper_trading,
             slippage_model=self._slippage_model,
             max_trades_per_hour=self._config.strategy.max_trades_per_hour,
+            ledger=self._ledger,
         )
         self._swarm = SimulationWorld(self._config.swarm)
         self._strategy = StrategyEngine(
@@ -209,6 +216,7 @@ class PipelineOrchestrator:
         self._runs: list[PipelineRun] = []
         self._running = False
         self._scraped_data_cache: dict[str, dict[str, Any]] = {}
+        self._snapshot_task: asyncio.Task | None = None
 
         self._config_version = self._config.fingerprint()
         self._config_snapshot_path = (
@@ -249,11 +257,45 @@ class PipelineOrchestrator:
         logger.info("Starting pipeline orchestrator")
         self._running = True
         await self._scraper.start()
+        if self._ledger:
+            restored = self._ledger.load()
+            if restored["trades"]:
+                count = self._executor.restore(
+                    restored["trades"], restored["realized_pnl"]
+                )
+                logger.info(
+                    f"Restored {count} trades from portfolio ledger "
+                    f"(realized pnl ${self._executor.realized_pnl:.2f})"
+                )
+            self._snapshot_task = asyncio.create_task(self._snapshot_portfolio_loop())
         await self._strategy.initialize(self._config.swarm.num_agents)
         logger.info("Pipeline orchestrator started")
 
+    async def _snapshot_portfolio_loop(self) -> None:
+        interval = max(5, self._config.portfolio.snapshot_every_seconds)
+        while self._running:
+            await asyncio.sleep(interval)
+            try:
+                summary = self._executor.get_portfolio_summary()
+                self._ledger.record_snapshot(summary)
+                self._ledger.save_state(self._executor.realized_pnl)
+            except Exception as e:
+                logger.warning(f"Portfolio snapshot failed: {e}")
+
     async def stop(self) -> None:
         logger.info("Stopping pipeline orchestrator")
+        if self._snapshot_task:
+            self._snapshot_task.cancel()
+            try:
+                await self._snapshot_task
+            except asyncio.CancelledError:
+                pass
+        if self._ledger:
+            try:
+                self._ledger.record_snapshot(self._executor.get_portfolio_summary())
+                self._ledger.save_state(self._executor.realized_pnl)
+            except Exception as e:
+                logger.warning(f"Final portfolio snapshot failed: {e}")
         self._running = False
         await self._scraper.stop()
         await self._market_client.close()

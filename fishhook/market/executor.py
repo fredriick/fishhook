@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fishhook.config.settings import PolymarketConfig
 from fishhook.market.attribution import EdgeAttributionTracker
@@ -14,6 +14,9 @@ from fishhook.market.client import PolymarketClient
 from fishhook.market.models import OrderSide, Position, TradeSignal
 from fishhook.market.slippage import SlippageEstimate, SlippageModel
 from fishhook.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from fishhook.portfolio.ledger import PortfolioLedger
 
 logger = get_logger("market.executor")
 
@@ -52,6 +55,31 @@ class ExecutedTrade:
             "post_edge": round(self.post_edge, 4),
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ExecutedTrade:
+        ts = data.get("timestamp")
+        try:
+            parsed_ts = datetime.fromisoformat(ts) if ts else datetime.now()
+        except (TypeError, ValueError):
+            parsed_ts = datetime.now()
+        side = str(data.get("side", "buy")).upper()
+        return cls(
+            order_id=data.get("order_id", ""),
+            market_id=data.get("market_id", ""),
+            side=side if side in ("BUY", "SELL") else "BUY",
+            price=float(data.get("price", 0.0)),
+            size=float(data.get("size", 0.0)),
+            timestamp=parsed_ts,
+            status=data.get("status", "pending"),
+            fill_price=data.get("fill_price"),
+            fill_size=data.get("fill_size"),
+            paper=bool(data.get("paper", False)),
+            slippage_cost=float(data.get("slippage_cost", 0.0)),
+            pre_edge=float(data.get("pre_edge", 0.0)),
+            post_edge=float(data.get("post_edge", 0.0)),
+            swarm_signal=float(data.get("swarm_signal", 0.0)),
+        )
+
 
 class TradeExecutor:
     def __init__(
@@ -62,12 +90,15 @@ class TradeExecutor:
         paper_trading: bool = False,
         slippage_model: SlippageModel | None = None,
         max_trades_per_hour: int = 10,
+        ledger: PortfolioLedger | None = None,
     ) -> None:
         self._client = client
         self._config = config or PolymarketConfig()
         self._max_trades_per_hour = max(1, int(max_trades_per_hour))
         self._positions: dict[str, Position] = {}
         self._trade_history: list[ExecutedTrade] = []
+        self._realized_pnl: float = 0.0
+        self._ledger = ledger
         self._last_trade_time: float = 0
         self._trades_this_hour: int = 0
         self._hour_start: float = time.time()
@@ -92,6 +123,10 @@ class TradeExecutor:
     @property
     def is_paper_trading(self) -> bool:
         return self._paper_trading
+
+    @property
+    def realized_pnl(self) -> float:
+        return self._realized_pnl
 
     @property
     def trades_remaining_this_hour(self) -> int:
@@ -204,6 +239,7 @@ class TradeExecutor:
             self._last_trade_time = time.time()
 
             self._update_position(signal)
+            self._persist_trade(trade)
 
             logger.info(
                 f"Executed: {signal.side.value} {signal.size} @ ${signal.price} "
@@ -234,6 +270,7 @@ class TradeExecutor:
         self._trades_this_hour += 1
         self._last_trade_time = time.time()
         self._update_position(signal)
+        self._persist_trade(trade)
 
         logger.info(
             f"[PAPER] {signal.side.value} {signal.size} @ ${signal.price} "
@@ -251,6 +288,60 @@ class TradeExecutor:
                 break
         return executed
 
+    def _persist_trade(self, trade: ExecutedTrade) -> None:
+        if self._ledger:
+            self._ledger.record_trade(trade)
+            self._ledger.save_state(self._realized_pnl)
+
+    def restore(self, trades: list[dict[str, Any]], realized_pnl: float = 0.0) -> int:
+        """Rebuild trade history, realized P&L, and open positions from a ledger."""
+        history = []
+        for t in trades:
+            side = str(t.get("side", "")).upper()
+            if t.get("market_id") and side in ("BUY", "SELL"):
+                trade = ExecutedTrade.from_dict(t)
+                history.append(trade)
+        history.sort(key=lambda x: (x.timestamp, x.order_id))
+        self._trade_history = history
+        self._realized_pnl = float(realized_pnl)
+        self._positions = {}
+        for trade in history:
+            self._replay_position(trade)
+        return len(history)
+
+    def _replay_position(self, trade: ExecutedTrade) -> None:
+        key = trade.market_id
+        if trade.side == OrderSide.BUY.value:
+            pos = self._positions.get(key)
+            if pos:
+                total_cost = pos.avg_price * pos.size + trade.price * trade.size
+                pos.size += trade.size
+                pos.avg_price = total_cost / pos.size
+                pos.current_price = trade.price
+                pos.unrealized_pnl = (pos.current_price - pos.avg_price) * pos.size
+            else:
+                pos = Position(
+                    market_id=key,
+                    token_id=key,
+                    outcome="yes",
+                    size=trade.size,
+                    avg_price=trade.price,
+                    current_price=trade.price,
+                )
+                pos.unrealized_pnl = 0.0
+                self._positions[key] = pos
+        else:
+            pos = self._positions.get(key)
+            if pos:
+                pos.size = max(0, pos.size - trade.size)
+                pos.current_price = trade.price
+                if pos.size == 0:
+                    del self._positions[key]
+                else:
+                    pos.unrealized_pnl = (
+                        pos.current_price - pos.avg_price
+                    ) * pos.size
+
     def _update_position(self, signal: TradeSignal) -> None:
         key = signal.market_id
         if key in self._positions:
@@ -263,7 +354,10 @@ class TradeExecutor:
                 )
                 pos.size = total_size
             else:
-                pos.size = max(0, pos.size - signal.size)
+                closed = min(pos.size, signal.size)
+                if closed > 0:
+                    self._realized_pnl += (signal.price - pos.avg_price) * closed
+                pos.size = max(0, pos.size - closed)
                 if pos.size == 0:
                     del self._positions[key]
                     return
@@ -284,7 +378,8 @@ class TradeExecutor:
 
     def get_portfolio_summary(self) -> dict[str, Any]:
         total_value = sum(p.size * p.current_price for p in self._positions.values())
-        total_pnl = sum(p.unrealized_pnl for p in self._positions.values())
+        unrealized = sum(p.unrealized_pnl for p in self._positions.values())
+        realized = self._realized_pnl
         winning = sum(1 for p in self._positions.values() if p.unrealized_pnl > 0)
         losing = sum(1 for p in self._positions.values() if p.unrealized_pnl < 0)
 
@@ -295,7 +390,9 @@ class TradeExecutor:
         result: dict[str, Any] = {
             "positions": len(self._positions),
             "total_value": round(total_value, 2),
-            "total_pnl": round(total_pnl, 2),
+            "realized_pnl": round(realized, 2),
+            "unrealized_pnl": round(unrealized, 2),
+            "total_pnl": round(realized + unrealized, 2),
             "winning_positions": winning,
             "losing_positions": losing,
             "total_trades": self.total_trades,
