@@ -56,15 +56,24 @@ class DataSource(ABC):
             )
         return self._client
 
-    async def _rate_limited_get(self, url: str, **kwargs: Any) -> httpx.Response:
+    async def _wait_rate_limit(self) -> None:
         elapsed = time.time() - self._last_request_time
         if elapsed < self._min_interval:
             import asyncio
 
             await asyncio.sleep(self._min_interval - elapsed)
+
+    async def _rate_limited_get(self, url: str, **kwargs: Any) -> httpx.Response:
+        await self._wait_rate_limit()
         client = await self._get_client()
         self._last_request_time = time.time()
         return await client.get(url, **kwargs)
+
+    async def _rate_limited_post(self, url: str, **kwargs: Any) -> httpx.Response:
+        await self._wait_rate_limit()
+        client = await self._get_client()
+        self._last_request_time = time.time()
+        return await client.post(url, **kwargs)
 
     async def close(self) -> None:
         if self._client and not self._client.is_closed:
@@ -85,6 +94,7 @@ class DuneAnalytics(DataSource):
             name="dune",
             api_key=api_key,
             base_url="https://api.dune.com/api/v1",
+            auth_header="X-Dune-API-Key",
         )
         self._query_ids = query_ids or []
         self._min_interval = 2.0
@@ -140,10 +150,15 @@ class DuneAnalytics(DataSource):
 class NansenQuery(DataSource):
     """Structured on-chain intelligence from the Nansen Query API.
 
-    Authentication uses the ``X-API-Key`` header (not Bearer). The source is
-    inert until a real ``api_key`` is configured, so tests and CI can run
+    Uses ``POST /api/v1/profiler/address/transactions`` with the ``apikey``
+    header for authentication (Nansen does not use Bearer tokens). The source
+    is inert until a real ``api_key`` is configured, so tests and CI can run
     without credentials.
     """
+
+    _ENDPOINT = "/api/v1/profiler/address/transactions"
+    _MAX_PAGE_SIZE = 100
+    _MAX_RETRY_AFTER = 30
 
     def __init__(
         self,
@@ -158,7 +173,7 @@ class NansenQuery(DataSource):
             name="nansen",
             api_key=api_key,
             base_url=base_url,
-            auth_header="X-API-Key",
+            auth_header="apikey",
         )
         self._chain = chain
         self._window_days = window_days
@@ -166,23 +181,49 @@ class NansenQuery(DataSource):
         self._category = category
         self._min_interval = 1.5
 
+    def _request_body(self, address: str, chain: str, days: int) -> dict[str, Any]:
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        since = now - timedelta(days=max(1, days))
+        per_page = max(1, min(self._page_size, self._MAX_PAGE_SIZE))
+        return {
+            "address": address,
+            "chain": chain,
+            "date": {
+                "from": since.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+            "pagination": {"page": 1, "per_page": per_page},
+            "hide_spam_token": True,
+        }
+
     async def _fetch_token_activity(
         self, address: str, chain: str, days: int
     ) -> dict[str, Any] | None:
-        """Query recent transfers for a token/wallet address."""
+        """Fetch recent transactions for an address from the profiler endpoint."""
         if not self._api_key:
             return None
+        url = f"{self._base_url}{self._ENDPOINT}"
+        body = self._request_body(address, chain, days)
         try:
-            resp = await self._rate_limited_get(
-                f"{self._base_url}/v0/{chain}/transactions/{address}",
-                params={"page_size": self._page_size},
-            )
+            resp = await self._rate_limited_post(url, json=body)
+            if resp.status_code == 429:
+                import asyncio
+
+                retry_after = resp.headers.get("Retry-After", "")
+                try:
+                    delay = min(float(retry_after), float(self._MAX_RETRY_AFTER))
+                except ValueError:
+                    delay = float(self._MAX_RETRY_AFTER)
+                logger.debug(f"Nansen rate limited, retrying in {delay}s")
+                await asyncio.sleep(delay)
+                resp = await self._rate_limited_post(url, json=body)
             resp.raise_for_status()
             data = resp.json()
-            if not isinstance(data, dict):
-                return None
-            if "items" not in data and "transfers" not in data:
+            if not isinstance(data, dict) or not isinstance(data.get("data"), list):
                 logger.debug(f"Nansen activity response for {address} unexpected shape")
+                return None
             return data
         except Exception as e:
             logger.warning(f"Nansen query for {address} failed: {e}")
@@ -210,37 +251,79 @@ class NansenQuery(DataSource):
                 signals.append(signal)
         return signals
 
+    @staticmethod
+    def _token_list_value(tokens: Any) -> tuple[float, int]:
+        """USD value and entry count for a ``tokens_sent``/``tokens_received`` list."""
+        total = 0.0
+        count = 0
+        if not isinstance(tokens, list):
+            return total, count
+        for token in tokens:
+            if not isinstance(token, dict):
+                continue
+            count += 1
+            value = token.get("value_usd")
+            if not isinstance(value, (int, float)):
+                price = token.get("price_usd")
+                amount = token.get("token_amount")
+                if isinstance(price, (int, float)) and isinstance(amount, (int, float)):
+                    value = abs(float(amount)) * float(price)
+            if isinstance(value, (int, float)):
+                total += abs(float(value))
+        return total, count
+
     def _activity_to_signal(
         self, address: str, data: dict[str, Any] | None
     ) -> SourceSignal | None:
-        if not data:
+        if not isinstance(data, dict):
             return None
 
-        transfers = data.get("items") or data.get("transfers")
-        if isinstance(transfers, dict):
-            transfers = transfers.get("items", [])
-        if not isinstance(transfers, list):
+        rows = data.get("data")
+        if not isinstance(rows, list):
             return None
 
         received_value = 0.0
         sent_value = 0.0
+        received_count = 0
+        sent_count = 0
         tx_count = 0
-        for tx in transfers:
-            if not isinstance(tx, dict):
+        for row in rows:
+            if not isinstance(row, dict):
                 continue
             tx_count += 1
-            direction = str(tx.get("tx_type") or tx.get("direction") or "").lower()
-            value = float(tx.get("value") or tx.get("amount") or 0.0)
-            if "received" in direction or "in" in direction:
-                received_value += value
-            elif "sent" in direction or "out" in direction:
-                sent_value += value
 
-        total = received_value + sent_value
-        if total <= 0:
+            recv_usd, recv_n = self._token_list_value(row.get("tokens_received"))
+            sent_usd, sent_n = self._token_list_value(row.get("tokens_sent"))
+            if recv_usd <= 0 and sent_usd <= 0:
+                # No priced transfers: fall back to the row-level USD volume,
+                # which belongs to whichever side of the transfer is populated.
+                volume = row.get("volume_usd")
+                if isinstance(volume, (int, float)) and volume > 0:
+                    if recv_n and not sent_n:
+                        recv_usd = float(volume)
+                    elif sent_n and not recv_n:
+                        sent_usd = float(volume)
+
+            received_value += recv_usd
+            sent_value += sent_usd
+            if recv_n:
+                received_count += 1
+            if sent_n:
+                sent_count += 1
+
+        if received_value + sent_value > 0:
+            recv, sent = received_value, sent_value
+            basis = "usd"
+        else:
+            # No priced flow at all: net direction of transfer counts.
+            recv, sent = float(received_count), float(sent_count)
+            basis = "count"
+
+        total = recv + sent
+        if tx_count == 0 or total <= 0:
             return None
 
-        net_flow = (received_value - sent_value) / total
+        net_flow = (recv - sent) / total
         confidence = min(1.0, 0.3 + (tx_count / 50.0))
 
         return SourceSignal(
@@ -253,8 +336,11 @@ class NansenQuery(DataSource):
                 "chain": self._chain,
                 "received_value": round(received_value, 6),
                 "sent_value": round(sent_value, 6),
+                "received_count": received_count,
+                "sent_count": sent_count,
                 "transactions": tx_count,
                 "window_days": self._window_days,
+                "basis": basis,
             },
         )
 

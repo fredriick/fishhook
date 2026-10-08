@@ -8,3 +8,4 @@ build/
 fishhook/data/
 fishhook/logs/
 *.log
+.env

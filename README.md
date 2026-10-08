@@ -305,7 +305,7 @@ data_sources:
     query_ids: []
   nansen:
     enabled: true
-    api_key: ""                   # Set via env: MCP_PARSE_DATA_SOURCES__NANSEN__API_KEY
+    api_key: ""                   # Set via env/.env: MCP_PARSE_DATA_SOURCES__NANSEN__API_KEY
     chain: "ethereum"
     window_days: 7
   orderbook_as_signal: true
@@ -317,8 +317,10 @@ portfolio:
 
 If a `data_sources.nansen.api_key` is configured, on-chain net-flow direction for
 the token addresses feeding the strategy is pulled from the Nansen Query API
-(`X-API-Key` auth) and emitted as a `[-1, 1]` smart-money signal. The connector
-is inert without the key.
+(`POST /api/v1/profiler/address/transactions`, `apikey` header auth) and emitted
+as a `[-1, 1]` smart-money signal weighted by USD transfer value, falling back to
+transfer counts when the API returns unpriced rows. The connector is inert
+without the key.
 
 Portfolio persistence: every executed trade is appended to
 `data_dir/portfolio/trades.jsonl`, periodic portfolio snapshots to
@@ -329,7 +331,8 @@ the ledger, so P&amp;L and history survive restarts. Disable with
 
 ### Environment Variables
 
-All config fields can be overridden via env vars with prefix `MCP_PARSE_`:
+All config fields can be overridden via env vars with prefix `MCP_PARSE_`
+(nested fields use `__`):
 
 ```bash
 MCP_PARSE_POLYMARKET__API_KEY=your_key
@@ -337,6 +340,12 @@ MCP_PARSE_POLYMARKET__TESTNET=false
 MCP_PARSE_SWARM__NUM_AGENTS=2000
 MCP_PARSE_DATA_SOURCES__NANSEN__API_KEY=your_nansen_key
 ```
+
+A `.env` file in the working directory is loaded with the same `MCP_PARSE_`
+variables, so secrets can stay out of `config.yaml` (which is tracked by git).
+Precedence: explicit `config.yaml` values > environment variables > `.env`.
+An empty-string secret in `config.yaml` counts as unset, so it never blocks
+the `.env`/environment fallback. `.env` is gitignored.
 
 ## How Each Layer Works
 

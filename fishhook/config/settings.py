@@ -172,7 +172,12 @@ class AlertingConfig(BaseModel):
 
 
 class PipelineConfig(BaseSettings):
-    model_config = {"env_prefix": "MCP_PARSE_"}
+    model_config = {
+        "env_prefix": "MCP_PARSE_",
+        "env_nested_delimiter": "__",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+    }
 
     data_dir: Path = Path("fishhook/data")
     log_level: str = "INFO"
@@ -198,8 +203,25 @@ class PipelineConfig(BaseSettings):
         if path.exists():
             with open(path) as f:
                 data = yaml.safe_load(f) or {}
-            return cls(**data)
+            return cls(**cls._drop_empty_secrets(data))
         return cls()
+
+    @classmethod
+    def _drop_empty_secrets(cls, data: Any) -> Any:
+        """Remove empty-string secrets from YAML input.
+
+        Explicit empty secrets in config files would otherwise outrank
+        environment variables and ``.env``, leaving the field unset.
+        """
+        if isinstance(data, dict):
+            return {
+                k: cls._drop_empty_secrets(v)
+                for k, v in data.items()
+                if not (k in cls.SECRET_FIELDS and v == "")
+            }
+        if isinstance(data, list):
+            return [cls._drop_empty_secrets(v) for v in data]
+        return data
 
     def to_yaml(self, path: str | Path) -> None:
         path = Path(path)

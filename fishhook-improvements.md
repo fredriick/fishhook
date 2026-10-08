@@ -43,7 +43,7 @@ The same news event will appear across dozens of sources within minutes. Without
 
 ### Structured API Sources
 > **Status: Implemented** — **Dune queries**, **Nansen smart-money flow signals**, and **Polymarket CLOB order-book depth** are wired into the strategy engine via `SignalSourceManager`.
-> The **Nansen** connector (`NansenQuery` in `fishhook/ingestion/sources.py`, configured as `data_sources.nansen`) authenticates with an `X-API-Key` header and converts net token-flow direction over a rolling window into a `[-1, 1]` signal with confidence scaled by transfer count. It is inert until `NANSEN_API_KEY` / `data_sources.nansen.api_key` is set, so the pipeline runs and CI stays green without credentials.
+> The **Nansen** connector (`NansenQuery` in `fishhook/ingestion/sources.py`, configured as `data_sources.nansen`) calls `POST /api/v1/profiler/address/transactions` with an `apikey` header and converts net transfer value over a rolling window into a `[-1, 1]` signal (USD-weighted, falling back to transfer counts), with confidence scaled by transfer count. It is inert until `data_sources.nansen.api_key` is set (env or `.env`), so the pipeline runs and CI stays green without credentials; an opt-in live test runs when `NANSEN_LIVE_TEST_KEY` is set.
 Supplement Playwright scraping with direct API integrations for higher-reliability data:
 - **Dune Analytics** — on-chain activity, wallet flows, protocol metrics
 - **Nansen** — smart money wallet signals
