@@ -389,7 +389,11 @@ class PipelineOrchestrator:
         agents: int = 1000,
         rounds: int = 50,
     ) -> dict[str, Any]:
-        swarm = SimulationWorld()
+        # Session the *configured* swarm so heterogeneity, consensus
+        # threshold, personality, etc. from config.yaml -> swarm: apply, with
+        # only agents/rounds overridden per call. Copy so the orchestrator's
+        # live config is not mutated.
+        swarm = SimulationWorld(self._config.swarm.model_copy())
         swarm._config.num_agents = agents
         swarm._config.max_rounds = rounds
         swarm.initialize()
@@ -410,11 +414,19 @@ class PipelineOrchestrator:
         }
 
     def get_status(self) -> dict[str, Any]:
+        pm = self._config.polymarket
+        trading_mode = (
+            "paper"
+            if pm.paper_trading
+            else ("testnet" if pm.testnet else "live")
+        )
+
         status: dict[str, Any] = {
             "running": self._running,
             "total_runs": len(self._runs),
             "config_version": self._config_version,
             "config_snapshot": str(self._config_snapshot_path),
+            "trading_mode": trading_mode,
             "total_trades": self._executor.total_trades,
             "portfolio": self._executor.get_portfolio_summary(),
             "strategy": self._strategy.get_state_summary(),

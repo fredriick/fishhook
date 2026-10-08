@@ -47,6 +47,9 @@ async def test_config_endpoint_returns_version_and_redacts_secrets(dserver) -> N
 
 @pytest.mark.asyncio
 async def test_status_endpoint_includes_meta(dserver) -> None:
+    config = dserver._orchestrator._config
+    config.polymarket.testnet = True
+
     client = await _client(dserver)
     try:
         resp = await client.get("/api/status")
@@ -54,6 +57,7 @@ async def test_status_endpoint_includes_meta(dserver) -> None:
         data = await resp.json()
         assert data["config_version"]
         assert "data_sources" in data
+        assert data["trading_mode"] == "testnet"
     finally:
         await client.close()
 
@@ -110,6 +114,50 @@ async def test_run_endpoint_uses_orchestrator(dserver) -> None:
         data = await resp.json()
         assert data["run_id"] == 7
         assert data["markets_analyzed"] == 3
+        assert data["mode"] in ("testnet", "paper", "live")
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_run_live_mode_requires_explicit_confirmation(dserver) -> None:
+    config = dserver._orchestrator._config
+    config.polymarket.testnet = False
+    config.polymarket.paper_trading = False
+
+    @dataclass
+    class _FakeRun:
+        run_id: int = 1
+        markets_analyzed: int = 1
+        signals_generated: int = 0
+        trades_executed: int = 0
+        errors: list = field(default_factory=list)
+
+        def to_dict(self) -> dict[str, Any]:
+            return {
+                "run_id": self.run_id,
+                "markets_analyzed": self.markets_analyzed,
+                "signals_generated": self.signals_generated,
+                "trades_executed": self.trades_executed,
+                "errors": self.errors,
+            }
+
+    async def fake_run_once(**kwargs) -> _FakeRun:
+        return _FakeRun()
+
+    dserver._orchestrator.run_once = fake_run_once
+
+    client = await _client(dserver)
+    try:
+        refused = await client.post("/api/run", json={"markets": 5})
+        assert refused.status == 400
+
+        accepted = await client.post(
+            "/api/run", json={"markets": 5, "mode": "live"}
+        )
+        assert accepted.status == 200
+        data = await accepted.json()
+        assert data["mode"] == "live"
     finally:
         await client.close()
 

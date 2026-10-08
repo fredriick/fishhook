@@ -128,6 +128,7 @@
       <button class="danger" onclick="haltTrading()">Halt</button>
       <button class="secondary" onclick="resumeTrading()">Resume</button>
     </div>
+    <label style="font-size:12px; color:var(--dim);"><input type="checkbox" id="pLiveMode" disabled> Live-mode confirm (only needed when not testnet/paper)</label>
     <label style="font-size:12px; color:var(--dim);">URLs (space-separated)
       <input type="text" id="pUrls" style="width:100%; margin-top:4px;" placeholder="https://example.com https://polymarket.com">
     </label>
@@ -158,6 +159,7 @@
     <div class="stat-row">
       <div class="stat"><div class="val" id="cfgTag" style="font-size:16px;">--</div><div class="label">Version Tag</div></div>
       <div class="stat"><div class="val" id="cfgBreaker" style="font-size:16px;">--</div><div class="label">Circuit Breaker</div></div>
+      <div class="stat"><div class="val" id="tradingMode" style="font-size:16px;">--</div><div class="label">Trading Mode</div></div>
     </div>
     <div id="cfgSources" style="font-size:11px; color:var(--dim); margin-bottom:8px;">Data sources: --</div>
     <pre class="pretty" id="cfgSnapshot">--</pre>
@@ -424,8 +426,10 @@ async function runPipeline() {
   const category = document.getElementById('pCategory').value.trim() || null;
   const el = document.getElementById('actionResult');
   el.textContent = 'Running pipeline...';
+  const body = { markets, category };
+  if (document.getElementById('pLiveMode').checked) body.mode = 'live';
   log(`Running pipeline: markets=${markets}, category=${category || 'all'}`);
-  const result = await apiPost('/api/run', { markets, category });
+  const result = await apiPost('/api/run', body);
   if (result) {
     el.textContent = `Run #${result.run_id}: markets=${result.markets_analyzed}, signals=${result.signals_generated}, trades=${result.trades_executed}, errors=${(result.errors || []).length}`;
     log(`Pipeline run complete: ${result.markets_analyzed} markets, ${result.trades_executed} trades`);
@@ -501,6 +505,13 @@ function updateConfig(status, config) {
     } else {
       el.textContent = 'DISABLED';
     }
+    const mode = status.trading_mode || 'unknown';
+    const modeEl = document.getElementById('tradingMode');
+    modeEl.textContent = mode.toUpperCase();
+    modeEl.className = 'val ' + (mode === 'live' ? 'bearish' : 'bullish');
+    const liveCb = document.getElementById('pLiveMode');
+    liveCb.disabled = mode !== 'live';
+    liveCb.checked = false;
     const sources = status.data_sources || {};
     document.getElementById('cfgSources').textContent = 'Data sources: ' + (Object.keys(sources).join(', ') || 'none');
   }

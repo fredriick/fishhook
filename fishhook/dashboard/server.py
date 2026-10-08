@@ -194,11 +194,30 @@ class DashboardServer:
         category = payload.get("category")
         categories = [category] if category else None
 
+        pm = self._orchestrator._config.polymarket
+        mode = (
+            "paper"
+            if pm.paper_trading
+            else ("testnet" if pm.testnet else "live")
+        )
+        if mode == "live" and payload.get("mode") != "live":
+            return web.json_response(
+                {
+                    "error": (
+                        "Refusing to run: pipeline is in LIVE trading mode. "
+                        "Pass {\"mode\": \"live\"} to explicitly confirm real orders."
+                    )
+                },
+                status=400,
+            )
+
         run = await self._orchestrator.run_once(
             categories=categories,
             max_markets=max_markets,
         )
-        return web.json_response(run.to_dict())
+        result = run.to_dict()
+        result["mode"] = mode
+        return web.json_response(result)
 
     async def _handle_scrape(self, request: Any) -> Any:
         from aiohttp import web

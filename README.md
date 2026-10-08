@@ -222,15 +222,15 @@ Open `http://127.0.0.1:8787` after running `fishhook dashboard`.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/status` | GET | Full pipeline state (running, trades, strategy, cached data, sources) |
+| `/api/status` | GET | Full pipeline state (running, trades, strategy, cached data, sources, trading mode) |
 | `/api/config` | GET | Active config version, tag, snapshot path, and redacted snapshot |
 | `/api/simulation` | GET | Current swarm consensus and signal |
-| `/api/simulation/run` | GET | Trigger a simulation. Query params: `agents`, `rounds`, `signal` |
+| `/api/simulation/run` | GET | Trigger a simulation. Params: `agents`, `rounds`, `signal`; uses the configured `swarm.*` settings |
 | `/api/trades` | GET | Trade history and portfolio summary |
 | `/api/network` | GET | Social network stats, influencers, community sizes |
 | `/api/history` | GET | History of simulation results |
 | `/api/backtest` | GET | Run a backtest. Params: `markets`, `agents`, `rounds`, `min_volume`, `category`, `live`, `sweep` |
-| `/api/run` | POST | Run the full pipeline once. Body: `{"markets": 10, "category": "crypto"}` |
+| `/api/run` | POST | Run the full pipeline once. Body: `{"markets": 10, "category": "crypto"}`. When the pipeline is in live mode (not testnet/paper) it refuses unless the body explicitly confirms `"mode": "live"` |
 | `/api/scrape` | POST | Scrape URLs. Body: `{"urls": ["https://...", ...]}` |
 | `/api/halt` | POST | Force-open the circuit breaker (halt trading). Body: `{"reason": "..."}` |
 | `/api/resume` | POST | Reset the circuit breaker. Body: `{}` |
